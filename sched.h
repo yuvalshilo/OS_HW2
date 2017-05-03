@@ -6,7 +6,7 @@
 extern unsigned long event;
 
 #include <linux/config.h>
-#include <linux/binfmts.h>123123123
+#include <linux/binfmts.h>
 #include <linux/threads.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -32,11 +32,6 @@ struct exec_domain;
 
 /*
  * cloning flags:   
-<<<<<<< HEAD
- lkjkl
-=======
->>>>>>> branch-try
- sad
  */
 #define CSIGNAL		0x000000ff	/* signal mask to be sent at exit */
 #define CLONE_VM	0x00000100	/* set if VM shared between processes */
