@@ -1,1218 +1,1912 @@
 /*
- * linux/net/sunrpc/sched.c
+ *  kernel/sched.c
  *
- * Scheduling for synchronous and asynchronous RPC requests.
+ *  Kernel scheduler and related syscalls
  *
- * Copyright (C) 1996 Olaf Kirch, <okir@monad.swb.de>
- * 
- * TCP NFS related read + write fixes
- * (C) 1999 Dave Airlie, University of Limerick, Ireland <airlied@linux.ie>
+ *  Copyright (C) 1991-2002  Linus Torvalds
+ *
+ *  1996-12-23  Modified by Dave Grothe to fix bugs in semaphores and
+ *              make semaphores SMP safe
+ *  1998-11-19	Implemented schedule_timeout() and related stuff
+ *		by Andrea Arcangeli
+ *  2002-01-04	New ultra-scalable O(1) scheduler by Ingo Molnar:
+ *  		hybrid priority-list and round-robin design with
+ *  		an array-switch method of distributing timeslices
+ *  		and per-CPU runqueues.  Additional code by Davide
+ *  		Libenzi, Robert Love, and Rusty Russell.
  */
 
-#include <linux/module.h>
-
-#define __KERNEL_SYSCALLS__
-#include <linux/sched.h>
-#include <linux/interrupt.h>
-#include <linux/slab.h>
-#include <linux/unistd.h>
-#include <linux/smp.h>
+#include <linux/mm.h>
+#include <linux/nmi.h>
+#include <linux/init.h>
+#include <asm/uaccess.h>
+#include <linux/highmem.h>
 #include <linux/smp_lock.h>
-#include <linux/spinlock.h>
+#include <asm/mmu_context.h>
+#include <linux/interrupt.h>
+#include <linux/completion.h>
+#include <linux/kernel_stat.h>
 
-#include <linux/sunrpc/clnt.h>
-#include <linux/sunrpc/xprt.h>
+/*
+ * Convert user-nice values [ -20 ... 0 ... 19 ]
+ * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+ * and back.
+ */
+#define NICE_TO_PRIO(nice)	(MAX_RT_PRIO + (nice) + 20)
+#define PRIO_TO_NICE(prio)	((prio) - MAX_RT_PRIO - 20)
+#define TASK_NICE(p)		PRIO_TO_NICE((p)->static_prio)
 
-#ifdef RPC_DEBUG
-#define RPCDBG_FACILITY		RPCDBG_SCHED
-static int			rpc_task_id;
+/*
+ * 'User priority' is the nice value converted to something we
+ * can work with better when scaling various scheduler parameters,
+ * it's a [ 0 ... 39 ] range.
+ */
+#define USER_PRIO(p)		((p)-MAX_RT_PRIO)
+#define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
+#define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
+
+/*
+ * These are the 'tuning knobs' of the scheduler:
+ *
+ * Minimum timeslice is 10 msecs, default timeslice is 150 msecs,
+ * maximum timeslice is 300 msecs. Timeslices get refilled after
+ * they expire.
+ */
+#define MIN_TIMESLICE		( 10 * HZ / 1000)
+#define MAX_TIMESLICE		(300 * HZ / 1000)
+#define CHILD_PENALTY		95
+#define PARENT_PENALTY		100
+#define EXIT_WEIGHT		3
+#define PRIO_BONUS_RATIO	25
+#define INTERACTIVE_DELTA	2
+#define MAX_SLEEP_AVG		(2*HZ)
+#define STARVATION_LIMIT	(2*HZ)
+
+/*
+ * If a task is 'interactive' then we reinsert it in the active
+ * array after it has expired its current timeslice. (it will not
+ * continue to run immediately, it will still roundrobin with
+ * other interactive tasks.)
+ *
+ * This part scales the interactivity limit depending on niceness.
+ *
+ * We scale it linearly, offset by the INTERACTIVE_DELTA delta.
+ * Here are a few examples of different nice levels:
+ *
+ *  TASK_INTERACTIVE(-20): [1,1,1,1,1,1,1,1,1,0,0]
+ *  TASK_INTERACTIVE(-10): [1,1,1,1,1,1,1,0,0,0,0]
+ *  TASK_INTERACTIVE(  0): [1,1,1,1,0,0,0,0,0,0,0]
+ *  TASK_INTERACTIVE( 10): [1,1,0,0,0,0,0,0,0,0,0]
+ *  TASK_INTERACTIVE( 19): [0,0,0,0,0,0,0,0,0,0,0]
+ *
+ * (the X axis represents the possible -5 ... 0 ... +5 dynamic
+ *  priority range a task can explore, a value of '1' means the
+ *  task is rated interactive.)
+ *
+ * Ie. nice +19 tasks can never get 'interactive' enough to be
+ * reinserted into the active array. And only heavily CPU-hog nice -20
+ * tasks will be expired. Default nice 0 tasks are somewhere between,
+ * it takes some effort for them to get interactive, but it's not
+ * too hard.
+ */
+
+#define SCALE(v1,v1_max,v2_max) \
+	(v1) * (v2_max) / (v1_max)
+
+#define DELTA(p) \
+	(SCALE(TASK_NICE(p), 40, MAX_USER_PRIO*PRIO_BONUS_RATIO/100) + \
+		INTERACTIVE_DELTA)
+
+#define TASK_INTERACTIVE(p) \
+	((p)->prio <= (p)->static_prio - DELTA(p))
+
+/*
+ * TASK_TIMESLICE scales user-nice values [ -20 ... 19 ]
+ * to time slice values.
+ *
+ * The higher a process's priority, the bigger timeslices
+ * it gets during one round of execution. But even the lowest
+ * priority process gets MIN_TIMESLICE worth of execution time.
+ */
+
+#define TASK_TIMESLICE(p) (MIN_TIMESLICE + \
+	((MAX_TIMESLICE - MIN_TIMESLICE) * (MAX_PRIO-1-(p)->static_prio)/39))
+
+/*
+ * These are the runqueue data structures:
+ */
+
+#define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
+
+typedef struct runqueue runqueue_t;
+
+struct prio_array {
+	int nr_active;
+	unsigned long bitmap[BITMAP_SIZE];
+	list_t queue[MAX_PRIO];
+};
+
+/*
+ * This is the main, per-CPU runqueue data structure.
+ *
+ * Locking rule: those places that want to lock multiple runqueues
+ * (such as the load balancing or the process migration code), lock
+ * acquire operations must be ordered by ascending &runqueue.
+ */
+struct runqueue {
+	spinlock_t lock;
+	unsigned long nr_running, nr_switches, expired_timestamp;
+	signed long nr_uninterruptible;
+	task_t *curr, *idle;
+	prio_array_t *active, *expired, arrays[2];
+	int prev_nr_running[NR_CPUS];
+	task_t *migration_thread;
+	list_t migration_queue;
+} ____cacheline_aligned;
+
+static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
+
+#define cpu_rq(cpu)		(runqueues + (cpu))
+#define this_rq()		cpu_rq(smp_processor_id())
+#define task_rq(p)		cpu_rq((p)->cpu)
+#define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
+#define rt_task(p)		((p)->prio < MAX_RT_PRIO)
+
+/*
+ * Default context-switch locking:
+ */
+#ifndef prepare_arch_schedule
+# define prepare_arch_schedule(prev)	do { } while(0)
+# define finish_arch_schedule(prev)	do { } while(0)
+# define prepare_arch_switch(rq)	do { } while(0)
+# define finish_arch_switch(rq)		spin_unlock_irq(&(rq)->lock)
 #endif
 
 /*
- * We give RPC the same get_free_pages priority as NFS
+ * task_rq_lock - lock the runqueue a given task resides on and disable
+ * interrupts.  Note the ordering: we can safely lookup the task_rq without
+ * explicitly disabling preemption.
  */
-#define GFP_RPC			GFP_NOFS
-
-static void			__rpc_default_timer(struct rpc_task *task);
-static void			rpciod_killall(void);
-
-/*
- * When an asynchronous RPC task is activated within a bottom half
- * handler, or while executing another RPC task, it is put on
- * schedq, and rpciod is woken up.
- */
-static RPC_WAITQ(schedq, "schedq");
-
-/*
- * RPC tasks that create another task (e.g. for contacting the portmapper)
- * will wait on this queue for their child's completion
- */
-static RPC_WAITQ(childq, "childq");
-
-/*
- * RPC tasks sit here while waiting for conditions to improve.
- */
-static RPC_WAITQ(delay_queue, "delayq");
-
-/*
- * All RPC tasks are linked into this list
- */
-static LIST_HEAD(all_tasks);
-
-/*
- * rpciod-related stuff
- */
-static DECLARE_WAIT_QUEUE_HEAD(rpciod_idle);
-static DECLARE_WAIT_QUEUE_HEAD(rpciod_killer);
-static DECLARE_MUTEX(rpciod_sema);
-static unsigned int		rpciod_users;
-static pid_t			rpciod_pid;
-static int			rpc_inhibit;
-
-/*
- * Spinlock for wait queues. Access to the latter also has to be
- * interrupt-safe in order to allow timers to wake up sleeping tasks.
- */
-spinlock_t rpc_queue_lock = SPIN_LOCK_UNLOCKED;
-/*
- * Spinlock for other critical sections of code.
- */
-static spinlock_t rpc_sched_lock = SPIN_LOCK_UNLOCKED;
-
-/*
- * This is the last-ditch buffer for NFS swap requests
- */
-static u32			swap_buffer[PAGE_SIZE >> 2];
-static long			swap_buffer_used;
-
-/*
- * Make allocation of the swap_buffer SMP-safe
- */
-static __inline__ int rpc_lock_swapbuf(void)
+static inline runqueue_t *task_rq_lock(task_t *p, unsigned long *flags)
 {
-	return !test_and_set_bit(1, &swap_buffer_used);
-}
-static __inline__ void rpc_unlock_swapbuf(void)
-{
-	clear_bit(1, &swap_buffer_used);
-}
+	struct runqueue *rq;
 
-/*
- * Disable the timer for a given RPC task. Should be called with
- * rpc_queue_lock and bh_disabled in order to avoid races within
- * rpc_run_timer().
- */
-static inline void
-__rpc_disable_timer(struct rpc_task *task)
-{
-	dprintk("RPC: %4d disabling timer\n", task->tk_pid);
-	task->tk_timeout_fn = NULL;
-	task->tk_timeout = 0;
-}
-
-/*
- * Run a timeout function.
- * We use the callback in order to allow __rpc_wake_up_task()
- * and friends to disable the timer synchronously on SMP systems
- * without calling del_timer_sync(). The latter could cause a
- * deadlock if called while we're holding spinlocks...
- */
-static void
-rpc_run_timer(struct rpc_task *task)
-{
-	void (*callback)(struct rpc_task *);
-
-	spin_lock_bh(&rpc_queue_lock);
-	callback = task->tk_timeout_fn;
-	task->tk_timeout_fn = NULL;
-	spin_unlock_bh(&rpc_queue_lock);
-	if (callback) {
-		dprintk("RPC: %4d running timer\n", task->tk_pid);
-		callback(task);
+repeat_lock_task:
+	local_irq_save(*flags);
+	rq = task_rq(p);
+	spin_lock(&rq->lock);
+	if (unlikely(rq != task_rq(p))) {
+		spin_unlock_irqrestore(&rq->lock, *flags);
+		goto repeat_lock_task;
 	}
+	return rq;
+}
+
+static inline void task_rq_unlock(runqueue_t *rq, unsigned long *flags)
+{
+	spin_unlock_irqrestore(&rq->lock, *flags);
 }
 
 /*
- * Set up a timer for the current task.
+ * rq_lock - lock a given runqueue and disable interrupts.
  */
-static inline void
-__rpc_add_timer(struct rpc_task *task, rpc_action timer)
+static inline runqueue_t *this_rq_lock(void)
 {
-	if (!task->tk_timeout)
-		return;
+	runqueue_t *rq;
 
-	dprintk("RPC: %4d setting alarm for %lu ms\n",
-			task->tk_pid, task->tk_timeout * 1000 / HZ);
+	local_irq_disable();
+	rq = this_rq();
+	spin_lock(&rq->lock);
 
-	if (timer)
-		task->tk_timeout_fn = timer;
-	else
-		task->tk_timeout_fn = __rpc_default_timer;
-	mod_timer(&task->tk_timer, jiffies + task->tk_timeout);
+	return rq;
+}
+
+static inline void rq_unlock(runqueue_t *rq)
+{
+	spin_unlock(&rq->lock);
+	local_irq_enable();
 }
 
 /*
- * Set up a timer for an already sleeping task.
+ * Adding/removing a task to/from a priority array:
  */
-void rpc_add_timer(struct rpc_task *task, rpc_action timer)
+static inline void dequeue_task(struct task_struct *p, prio_array_t *array)
 {
-	spin_lock_bh(&rpc_queue_lock);
-	if (!(RPC_IS_RUNNING(task) || task->tk_wakeup))
-		__rpc_add_timer(task, timer);
-	spin_unlock_bh(&rpc_queue_lock);
+	array->nr_active--;
+	list_del(&p->run_list);
+	if (list_empty(array->queue + p->prio))
+		__clear_bit(p->prio, array->bitmap);
 }
 
-/*
- * Delete any timer for the current task. Because we use del_timer_sync(),
- * this function should never be called while holding rpc_queue_lock.
- */
-static inline void
-rpc_delete_timer(struct rpc_task *task)
+static inline void enqueue_task(struct task_struct *p, prio_array_t *array)
 {
-	if (timer_pending(&task->tk_timer)) {
-		dprintk("RPC: %4d deleting timer\n", task->tk_pid);
-		del_timer_sync(&task->tk_timer);
-	}
+	list_add_tail(&p->run_list, array->queue + p->prio);
+	__set_bit(p->prio, array->bitmap);
+	array->nr_active++;
+	p->array = array;
 }
 
-/*
- * Add new request to wait queue.
- *
- * Swapper tasks always get inserted at the head of the queue.
- * This should avoid many nasty memory deadlocks and hopefully
- * improve overall performance.
- * Everyone else gets appended to the queue to ensure proper FIFO behavior.
- */
-static inline int
-__rpc_add_wait_queue(struct rpc_wait_queue *queue, struct rpc_task *task)
+static inline int effective_prio(task_t *p)
 {
-	if (task->tk_rpcwait == queue)
-		return 0;
+	int bonus, prio;
 
-	if (task->tk_rpcwait) {
-		printk(KERN_WARNING "RPC: doubly enqueued task!\n");
-		return -EWOULDBLOCK;
-	}
-	if (RPC_IS_SWAPPER(task))
-		list_add(&task->tk_list, &queue->tasks);
-	else
-		list_add_tail(&task->tk_list, &queue->tasks);
-	task->tk_rpcwait = queue;
-
-	dprintk("RPC: %4d added to queue %p \"%s\"\n",
-				task->tk_pid, queue, rpc_qname(queue));
-
-	return 0;
-}
-
-int
-rpc_add_wait_queue(struct rpc_wait_queue *q, struct rpc_task *task)
-{
-	int		result;
-
-	spin_lock_bh(&rpc_queue_lock);
-	result = __rpc_add_wait_queue(q, task);
-	spin_unlock_bh(&rpc_queue_lock);
-	return result;
-}
-
-/*
- * Remove request from queue.
- * Note: must be called with spin lock held.
- */
-static inline void
-__rpc_remove_wait_queue(struct rpc_task *task)
-{
-	struct rpc_wait_queue *queue = task->tk_rpcwait;
-
-	if (!queue)
-		return;
-
-	list_del(&task->tk_list);
-	task->tk_rpcwait = NULL;
-
-	dprintk("RPC: %4d removed from queue %p \"%s\"\n",
-				task->tk_pid, queue, rpc_qname(queue));
-}
-
-void
-rpc_remove_wait_queue(struct rpc_task *task)
-{
-	if (!task->tk_rpcwait)
-		return;
-	spin_lock_bh(&rpc_queue_lock);
-	__rpc_remove_wait_queue(task);
-	spin_unlock_bh(&rpc_queue_lock);
-}
-
-/*
- * Make an RPC task runnable.
- *
- * Note: If the task is ASYNC, this must be called with 
- * the spinlock held to protect the wait queue operation.
- */
-static inline void
-rpc_make_runnable(struct rpc_task *task)
-{
-	if (task->tk_timeout_fn) {
-		printk(KERN_ERR "RPC: task w/ running timer in rpc_make_runnable!!\n");
-		return;
-	}
-	rpc_set_running(task);
-	if (RPC_IS_ASYNC(task)) {
-		if (RPC_IS_SLEEPING(task)) {
-			int status;
-			status = __rpc_add_wait_queue(&schedq, task);
-			if (status < 0) {
-				printk(KERN_WARNING "RPC: failed to add task to queue: error: %d!\n", status);
-				task->tk_status = status;
-				return;
-			}
-			rpc_clear_sleeping(task);
-			if (waitqueue_active(&rpciod_idle))
-				wake_up(&rpciod_idle);
-		}
-	} else {
-		rpc_clear_sleeping(task);
-		if (waitqueue_active(&task->tk_wait))
-			wake_up(&task->tk_wait);
-	}
-}
-
-/*
- * Place a newly initialized task on the schedq.
- */
-static inline void
-rpc_schedule_run(struct rpc_task *task)
-{
-	/* Don't run a child twice! */
-	if (RPC_IS_ACTIVATED(task))
-		return;
-	task->tk_active = 1;
-	rpc_set_sleeping(task);
-	rpc_make_runnable(task);
-}
-
-/*
- *	For other people who may need to wake the I/O daemon
- *	but should (for now) know nothing about its innards
- */
-void rpciod_wake_up(void)
-{
-	if(rpciod_pid==0)
-		printk(KERN_ERR "rpciod: wot no daemon?\n");
-	if (waitqueue_active(&rpciod_idle))
-		wake_up(&rpciod_idle);
-}
-
-/*
- * Prepare for sleeping on a wait queue.
- * By always appending tasks to the list we ensure FIFO behavior.
- * NB: An RPC task will only receive interrupt-driven events as long
- * as it's on a wait queue.
- */
-static void
-__rpc_sleep_on(struct rpc_wait_queue *q, struct rpc_task *task,
-			rpc_action action, rpc_action timer)
-{
-	int status;
-
-	dprintk("RPC: %4d sleep_on(queue \"%s\" time %ld)\n", task->tk_pid,
-				rpc_qname(q), jiffies);
-
-	if (!RPC_IS_ASYNC(task) && !RPC_IS_ACTIVATED(task)) {
-		printk(KERN_ERR "RPC: Inactive synchronous task put to sleep!\n");
-		return;
-	}
-
-	/* Mark the task as being activated if so needed */
-	if (!RPC_IS_ACTIVATED(task)) {
-		task->tk_active = 1;
-		rpc_set_sleeping(task);
-	}
-
-	status = __rpc_add_wait_queue(q, task);
-	if (status) {
-		printk(KERN_WARNING "RPC: failed to add task to queue: error: %d!\n", status);
-		task->tk_status = status;
-	} else {
-		rpc_clear_running(task);
-		if (task->tk_callback) {
-			dprintk(KERN_ERR "RPC: %4d overwrites an active callback\n", task->tk_pid);
-			BUG();
-		}
-		task->tk_callback = action;
-		__rpc_add_timer(task, timer);
-	}
-}
-
-void
-rpc_sleep_on(struct rpc_wait_queue *q, struct rpc_task *task,
-				rpc_action action, rpc_action timer)
-{
 	/*
-	 * Protect the queue operations.
+	 * Here we scale the actual sleep average [0 .... MAX_SLEEP_AVG]
+	 * into the -5 ... 0 ... +5 bonus/penalty range.
+	 *
+	 * We use 25% of the full 0...39 priority range so that:
+	 *
+	 * 1) nice +19 interactive tasks do not preempt nice 0 CPU hogs.
+	 * 2) nice -20 CPU hogs do not get preempted by nice 0 tasks.
+	 *
+	 * Both properties are important to certain workloads.
 	 */
-	spin_lock_bh(&rpc_queue_lock);
-	__rpc_sleep_on(q, task, action, timer);
-	spin_unlock_bh(&rpc_queue_lock);
+	bonus = MAX_USER_PRIO*PRIO_BONUS_RATIO*p->sleep_avg/MAX_SLEEP_AVG/100 -
+			MAX_USER_PRIO*PRIO_BONUS_RATIO/100/2;
+
+	prio = p->static_prio - bonus;
+	if (prio < MAX_RT_PRIO)
+		prio = MAX_RT_PRIO;
+	if (prio > MAX_PRIO-1)
+		prio = MAX_PRIO-1;
+	return prio;
 }
 
-void
-rpc_sleep_locked(struct rpc_wait_queue *q, struct rpc_task *task,
-		 rpc_action action, rpc_action timer)
+static inline void activate_task(task_t *p, runqueue_t *rq)
 {
-	/*
-	 * Protect the queue operations.
-	 */
-	spin_lock_bh(&rpc_queue_lock);
-	__rpc_sleep_on(q, task, action, timer);
-	__rpc_lock_task(task);
-	spin_unlock_bh(&rpc_queue_lock);
-}
+	unsigned long sleep_time = jiffies - p->sleep_timestamp;
+	prio_array_t *array = rq->active;
 
-/**
- * __rpc_wake_up_task - wake up a single rpc_task
- * @task: task to be woken up
- *
- * If the task is locked, it is merely removed from the queue, and
- * 'task->tk_wakeup' is set. rpc_unlock_task() will then ensure
- * that it is woken up as soon as the lock count goes to zero.
- *
- * Caller must hold rpc_queue_lock
- */
-static void
-__rpc_wake_up_task(struct rpc_task *task)
-{
-	dprintk("RPC: %4d __rpc_wake_up_task (now %ld inh %d)\n",
-					task->tk_pid, jiffies, rpc_inhibit);
-
-#ifdef RPC_DEBUG
-	if (task->tk_magic != 0xf00baa) {
-		printk(KERN_ERR "RPC: attempt to wake up non-existing task!\n");
-		rpc_debug = ~0;
-		rpc_show_tasks();
-		return;
+	if (!rt_task(p) && sleep_time) {
+		/*
+		 * This code gives a bonus to interactive tasks. We update
+		 * an 'average sleep time' value here, based on
+		 * sleep_timestamp. The more time a task spends sleeping,
+		 * the higher the average gets - and the higher the priority
+		 * boost gets as well.
+		 */
+		p->sleep_avg += sleep_time;
+		if (p->sleep_avg > MAX_SLEEP_AVG)
+			p->sleep_avg = MAX_SLEEP_AVG;
+		p->prio = effective_prio(p);
 	}
+	enqueue_task(p, array);
+	rq->nr_running++;
+}
+
+static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
+{
+	rq->nr_running--;
+	if (p->state == TASK_UNINTERRUPTIBLE)
+		rq->nr_uninterruptible++;
+	dequeue_task(p, p->array);
+	p->array = NULL;
+}
+
+static inline void resched_task(task_t *p)
+{
+#ifdef CONFIG_SMP
+	int need_resched;
+
+	need_resched = p->need_resched;
+	wmb();
+	set_tsk_need_resched(p);
+	if (!need_resched && (p->cpu != smp_processor_id()))
+		smp_send_reschedule(p->cpu);
+#else
+	set_tsk_need_resched(p);
 #endif
-	/* Has the task been executed yet? If not, we cannot wake it up! */
-	if (!RPC_IS_ACTIVATED(task)) {
-		printk(KERN_ERR "RPC: Inactive task (%p) being woken up!\n", task);
-		return;
+}
+
+#ifdef CONFIG_SMP
+
+/*
+ * Wait for a process to unschedule. This is used by the exit() and
+ * ptrace() code.
+ */
+void wait_task_inactive(task_t * p)
+{
+	unsigned long flags;
+	runqueue_t *rq;
+
+repeat:
+	rq = task_rq(p);
+	if (unlikely(rq->curr == p)) {
+		cpu_relax();
+		goto repeat;
 	}
-	if (RPC_IS_RUNNING(task))
-		return;
+	rq = task_rq_lock(p, &flags);
+	if (unlikely(rq->curr == p)) {
+		task_rq_unlock(rq, &flags);
+		goto repeat;
+	}
+	task_rq_unlock(rq, &flags);
+}
 
-	__rpc_disable_timer(task);
-	if (task->tk_rpcwait != &schedq)
-		__rpc_remove_wait_queue(task);
+/*
+ * Kick the remote CPU if the task is running currently,
+ * this code is used by the signal code to signal tasks
+ * which are in user-mode as quickly as possible.
+ *
+ * (Note that we do this lockless - if the task does anything
+ * while the message is in flight then it will notice the
+ * sigpending condition anyway.)
+ */
+void kick_if_running(task_t * p)
+{
+	if (p == task_rq(p)->curr)
+		resched_task(p);
+}
+#endif
 
-	/* If the task has been locked, then set tk_wakeup so that
-	 * rpc_unlock_task() wakes us up... */
-	if (task->tk_lock) {
-		task->tk_wakeup = 1;
-		return;
+/*
+ * Wake up a process. Put it on the run-queue if it's not
+ * already there.  The "current" process is always on the
+ * run-queue (except when the actual re-schedule is in
+ * progress), and as such you're allowed to do the simpler
+ * "current->state = TASK_RUNNING" to mark yourself runnable
+ * without the overhead of this.
+ */
+static int try_to_wake_up(task_t * p, int sync)
+{
+	unsigned long flags;
+	int success = 0;
+	long old_state;
+	runqueue_t *rq;
+
+repeat_lock_task:
+	rq = task_rq_lock(p, &flags);
+	old_state = p->state;
+	if (!p->array) {
+		/*
+		 * Fast-migrate the task if it's not running or runnable
+		 * currently. Do not violate hard affinity.
+		 */
+		if (unlikely(sync && (rq->curr != p) &&
+			(p->cpu != smp_processor_id()) &&
+			(p->cpus_allowed & (1UL << smp_processor_id())))) {
+
+			p->cpu = smp_processor_id();
+			task_rq_unlock(rq, &flags);
+			goto repeat_lock_task;
+		}
+		if (old_state == TASK_UNINTERRUPTIBLE)
+			rq->nr_uninterruptible--;
+		activate_task(p, rq);
+		/*
+		 * If sync is set, a resched_task() is a NOOP
+		 */
+		if (p->prio < rq->curr->prio)
+			resched_task(rq->curr);
+		success = 1;
+	}
+	p->state = TASK_RUNNING;
+	task_rq_unlock(rq, &flags);
+
+	return success;
+}
+
+int wake_up_process(task_t * p)
+{
+	return try_to_wake_up(p, 0);
+}
+
+void wake_up_forked_process(task_t * p)
+{
+	runqueue_t *rq = this_rq_lock();
+
+	p->state = TASK_RUNNING;
+	if (!rt_task(p)) {
+		/*
+		 * We decrease the sleep average of forking parents
+		 * and children as well, to keep max-interactive tasks
+		 * from forking tasks that are max-interactive.
+		 */
+		current->sleep_avg = current->sleep_avg * PARENT_PENALTY / 100;
+		p->sleep_avg = p->sleep_avg * CHILD_PENALTY / 100;
+		p->prio = effective_prio(p);
+	}
+	p->cpu = smp_processor_id();
+	activate_task(p, rq);
+
+	rq_unlock(rq);
+}
+
+/*
+ * Potentially available exiting-child timeslices are
+ * retrieved here - this way the parent does not get
+ * penalized for creating too many processes.
+ *
+ * (this cannot be used to 'generate' timeslices
+ * artificially, because any timeslice recovered here
+ * was given away by the parent in the first place.)
+ */
+void sched_exit(task_t * p)
+{
+	__cli();
+	if (p->first_time_slice) {
+		current->time_slice += p->time_slice;
+		if (unlikely(current->time_slice > MAX_TIMESLICE))
+			current->time_slice = MAX_TIMESLICE;
+	}
+	__sti();
+	/*
+	 * If the child was a (relative-) CPU hog then decrease
+	 * the sleep_avg of the parent as well.
+	 */
+	if (p->sleep_avg < current->sleep_avg)
+		current->sleep_avg = (current->sleep_avg * EXIT_WEIGHT +
+			p->sleep_avg) / (EXIT_WEIGHT + 1);
+}
+
+#if CONFIG_SMP
+asmlinkage void schedule_tail(task_t *prev)
+{
+	finish_arch_switch(this_rq());
+	finish_arch_schedule(prev);
+}
+#endif
+
+static inline task_t * context_switch(task_t *prev, task_t *next)
+{
+	struct mm_struct *mm = next->mm;
+	struct mm_struct *oldmm = prev->active_mm;
+
+	if (unlikely(!mm)) {
+		next->active_mm = oldmm;
+		atomic_inc(&oldmm->mm_count);
+		enter_lazy_tlb(oldmm, next, smp_processor_id());
 	} else
-		task->tk_wakeup = 0;
+		switch_mm(oldmm, mm, next, smp_processor_id());
 
-	rpc_make_runnable(task);
+	if (unlikely(!prev->mm)) {
+		prev->active_mm = NULL;
+		mmdrop(oldmm);
+	}
 
-	dprintk("RPC:      __rpc_wake_up_task done\n");
+	/* Here we just switch the register state and the stack. */
+	switch_to(prev, next, prev);
+
+	return prev;
+}
+
+unsigned long nr_running(void)
+{
+	unsigned long i, sum = 0;
+
+	for (i = 0; i < smp_num_cpus; i++)
+		sum += cpu_rq(cpu_logical_map(i))->nr_running;
+
+	return sum;
+}
+
+unsigned long nr_uninterruptible(void)
+{
+	unsigned long i, sum = 0;
+
+	for (i = 0; i < smp_num_cpus; i++)
+		sum += cpu_rq(cpu_logical_map(i))->nr_uninterruptible;
+
+	return sum;
+}
+
+unsigned long nr_context_switches(void)
+{
+	unsigned long i, sum = 0;
+
+	for (i = 0; i < smp_num_cpus; i++)
+		sum += cpu_rq(cpu_logical_map(i))->nr_switches;
+
+	return sum;
+}
+
+#if CONFIG_SMP
+/*
+ * Lock the busiest runqueue as well, this_rq is locked already.
+ * Recalculate nr_running if we have to drop the runqueue lock.
+ */
+static inline unsigned int double_lock_balance(runqueue_t *this_rq,
+	runqueue_t *busiest, int this_cpu, int idle, unsigned int nr_running)
+{
+	if (unlikely(!spin_trylock(&busiest->lock))) {
+		if (busiest < this_rq) {
+			spin_unlock(&this_rq->lock);
+			spin_lock(&busiest->lock);
+			spin_lock(&this_rq->lock);
+			/* Need to recalculate nr_running */
+			if (idle || (this_rq->nr_running > this_rq->prev_nr_running[this_cpu]))
+				nr_running = this_rq->nr_running;
+			else
+				nr_running = this_rq->prev_nr_running[this_cpu];
+		} else
+			spin_lock(&busiest->lock);
+	}
+	return nr_running;
 }
 
 /*
- * Default timeout handler if none specified by user
+ * Current runqueue is empty, or rebalance tick: if there is an
+ * inbalance (current runqueue is too short) then pull from
+ * busiest runqueue(s).
+ *
+ * We call this with the current runqueue locked,
+ * irqs disabled.
  */
-static void
-__rpc_default_timer(struct rpc_task *task)
+static void load_balance(runqueue_t *this_rq, int idle)
 {
-	dprintk("RPC: %d timeout (default timer)\n", task->tk_pid);
-	task->tk_status = -ETIMEDOUT;
-	rpc_wake_up_task(task);
-}
+	int imbalance, nr_running, load, max_load,
+		idx, i, this_cpu = smp_processor_id();
+	task_t *next = this_rq->idle, *tmp;
+	runqueue_t *busiest, *rq_src;
+	prio_array_t *array;
+	list_t *head, *curr;
 
-/*
- * Wake up the specified task
- */
-void
-rpc_wake_up_task(struct rpc_task *task)
-{
-	if (RPC_IS_RUNNING(task))
+	/*
+	 * We search all runqueues to find the most busy one.
+	 * We do this lockless to reduce cache-bouncing overhead,
+	 * we re-check the 'best' source CPU later on again, with
+	 * the lock held.
+	 *
+	 * We fend off statistical fluctuations in runqueue lengths by
+	 * saving the runqueue length during the previous load-balancing
+	 * operation and using the smaller one the current and saved lengths.
+	 * If a runqueue is long enough for a longer amount of time then
+	 * we recognize it and pull tasks from it.
+	 *
+	 * The 'current runqueue length' is a statistical maximum variable,
+	 * for that one we take the longer one - to avoid fluctuations in
+	 * the other direction. So for a load-balance to happen it needs
+	 * stable long runqueue on the target CPU and stable short runqueue
+	 * on the local runqueue.
+	 *
+	 * We make an exception if this CPU is about to become idle - in
+	 * that case we are less picky about moving a task across CPUs and
+	 * take what can be taken.
+	 */
+	if (idle || (this_rq->nr_running > this_rq->prev_nr_running[this_cpu]))
+		nr_running = this_rq->nr_running;
+	else
+		nr_running = this_rq->prev_nr_running[this_cpu];
+
+	busiest = NULL;
+	max_load = 1;
+	for (i = 0; i < smp_num_cpus; i++) {
+		int logical = cpu_logical_map(i);
+
+		rq_src = cpu_rq(logical);
+		if (idle || (rq_src->nr_running < this_rq->prev_nr_running[logical]))
+			load = rq_src->nr_running;
+		else
+			load = this_rq->prev_nr_running[logical];
+		this_rq->prev_nr_running[logical] = rq_src->nr_running;
+
+		if ((load > max_load) && (rq_src != this_rq)) {
+			busiest = rq_src;
+			max_load = load;
+		}
+	}
+
+	if (likely(!busiest))
 		return;
-	spin_lock_bh(&rpc_queue_lock);
-	__rpc_wake_up_task(task);
-	spin_unlock_bh(&rpc_queue_lock);
-}
 
-/*
- * Wake up the next task on the wait queue.
- */
-struct rpc_task *
-rpc_wake_up_next(struct rpc_wait_queue *queue)
-{
-	struct rpc_task	*task = NULL;
+	imbalance = (max_load - nr_running) / 2;
 
-	dprintk("RPC:      wake_up_next(%p \"%s\")\n", queue, rpc_qname(queue));
-	spin_lock_bh(&rpc_queue_lock);
-	task_for_first(task, &queue->tasks)
-		__rpc_wake_up_task(task);
-	spin_unlock_bh(&rpc_queue_lock);
+	/* It needs an at least ~25% imbalance to trigger balancing. */
+	if (!idle && (imbalance < (max_load + 3)/4))
+		return;
 
-	return task;
-}
+	nr_running = double_lock_balance(this_rq, busiest, this_cpu, idle, nr_running);
+	/*
+	 * Make sure nothing changed since we checked the
+	 * runqueue length.
+	 */
+	if (busiest->nr_running <= nr_running + 1)
+		goto out_unlock;
 
-/**
- * rpc_wake_up - wake up all rpc_tasks
- * @queue: rpc_wait_queue on which the tasks are sleeping
- *
- * Grabs rpc_queue_lock
- */
-void
-rpc_wake_up(struct rpc_wait_queue *queue)
-{
-	struct rpc_task *task;
+	/*
+	 * We first consider expired tasks. Those will likely not be
+	 * executed in the near future, and they are most likely to
+	 * be cache-cold, thus switching CPUs has the least effect
+	 * on them.
+	 */
+	if (busiest->expired->nr_active)
+		array = busiest->expired;
+	else
+		array = busiest->active;
 
-	spin_lock_bh(&rpc_queue_lock);
-	while (!list_empty(&queue->tasks))
-		task_for_first(task, &queue->tasks)
-			__rpc_wake_up_task(task);
-	spin_unlock_bh(&rpc_queue_lock);
-}
-
-/**
- * rpc_wake_up_status - wake up all rpc_tasks and set their status value.
- * @queue: rpc_wait_queue on which the tasks are sleeping
- * @status: status value to set
- *
- * Grabs rpc_queue_lock
- */
-void
-rpc_wake_up_status(struct rpc_wait_queue *queue, int status)
-{
-	struct rpc_task *task;
-
-	spin_lock_bh(&rpc_queue_lock);
-	while (!list_empty(&queue->tasks)) {
-		task_for_first(task, &queue->tasks) {
-			task->tk_status = status;
-			__rpc_wake_up_task(task);
+new_array:
+	/* Start searching at priority 0: */
+	idx = 0;
+skip_bitmap:
+	if (!idx)
+		idx = sched_find_first_bit(array->bitmap);
+	else
+		idx = find_next_bit(array->bitmap, MAX_PRIO, idx);
+	if (idx == MAX_PRIO) {
+		if (array == busiest->expired) {
+			array = busiest->active;
+			goto new_array;
 		}
+		goto out_unlock;
 	}
-	spin_unlock_bh(&rpc_queue_lock);
+
+	head = array->queue + idx;
+	curr = head->prev;
+skip_queue:
+	tmp = list_entry(curr, task_t, run_list);
+
+	/*
+	 * We do not migrate tasks that are:
+	 * 1) running (obviously), or
+	 * 2) cannot be migrated to this CPU due to cpus_allowed, or
+	 * 3) are cache-hot on their current CPU.
+	 */
+
+#define CAN_MIGRATE_TASK(p,rq,this_cpu)					\
+	((jiffies - (p)->sleep_timestamp > cache_decay_ticks) &&	\
+		((p) != (rq)->curr) &&					\
+			((p)->cpus_allowed & (1UL << (this_cpu))))
+
+	curr = curr->prev;
+
+	if (!CAN_MIGRATE_TASK(tmp, busiest, this_cpu)) {
+		if (curr != head)
+			goto skip_queue;
+		idx++;
+		goto skip_bitmap;
+	}
+	next = tmp;
+	/*
+	 * take the task out of the other runqueue and
+	 * put it into this one:
+	 */
+	dequeue_task(next, array);
+	busiest->nr_running--;
+	next->cpu = this_cpu;
+	this_rq->nr_running++;
+	enqueue_task(next, this_rq->active);
+	if (next->prio < current->prio)
+		set_need_resched();
+	if (!idle && --imbalance) {
+		if (curr != head)
+			goto skip_queue;
+		idx++;
+		goto skip_bitmap;
+	}
+out_unlock:
+	spin_unlock(&busiest->lock);
 }
 
 /*
- * Lock down a sleeping task to prevent it from waking up
- * and disappearing from beneath us.
+ * One of the idle_cpu_tick() or the busy_cpu_tick() function will
+ * gets called every timer tick, on every CPU. Our balancing action
+ * frequency and balancing agressivity depends on whether the CPU is
+ * idle or not.
  *
- * This function should always be called with the
- * rpc_queue_lock held.
+ * busy-rebalance every 250 msecs. idle-rebalance every 1 msec. (or on
+ * systems with HZ=100, every 10 msecs.)
  */
-int
-__rpc_lock_task(struct rpc_task *task)
+#define BUSY_REBALANCE_TICK (HZ/4 ?: 1)
+#define IDLE_REBALANCE_TICK (HZ/1000 ?: 1)
+
+static inline void idle_tick(void)
 {
-	if (!RPC_IS_RUNNING(task))
-		return ++task->tk_lock;
-	return 0;
+	if (jiffies % IDLE_REBALANCE_TICK)
+		return;
+	spin_lock(&this_rq()->lock);
+	load_balance(this_rq(), 1);
+	spin_unlock(&this_rq()->lock);
 }
 
-void
-rpc_unlock_task(struct rpc_task *task)
-{
-	spin_lock_bh(&rpc_queue_lock);
-	if (task->tk_lock && !--task->tk_lock && task->tk_wakeup)
-		__rpc_wake_up_task(task);
-	spin_unlock_bh(&rpc_queue_lock);
-}
+#endif
 
 /*
- * Run a task at a later time
+ * We place interactive tasks back into the active array, if possible.
+ *
+ * To guarantee that this does not starve expired tasks we ignore the
+ * interactivity of a task if the first expired task had to wait more
+ * than a 'reasonable' amount of time. This deadline timeout is
+ * load-dependent, as the frequency of array switched decreases with
+ * increasing number of running tasks:
  */
-static void	__rpc_atrun(struct rpc_task *);
-void
-rpc_delay(struct rpc_task *task, unsigned long delay)
-{
-	task->tk_timeout = delay;
-	rpc_sleep_on(&delay_queue, task, NULL, __rpc_atrun);
-}
-
-static void
-__rpc_atrun(struct rpc_task *task)
-{
-	task->tk_status = 0;
-	rpc_wake_up_task(task);
-}
+#define EXPIRED_STARVING(rq) \
+		((rq)->expired_timestamp && \
+		(jiffies - (rq)->expired_timestamp >= \
+			STARVATION_LIMIT * ((rq)->nr_running) + 1))
 
 /*
- * This is the RPC `scheduler' (or rather, the finite state machine).
+ * This function gets called by the timer code, with HZ frequency.
+ * We call it with interrupts disabled.
  */
-static int
-__rpc_execute(struct rpc_task *task)
+void scheduler_tick(int user_tick, int system)
 {
-	int		status = 0;
+	int cpu = smp_processor_id();
+	runqueue_t *rq = this_rq();
+	task_t *p = current;
 
-	dprintk("RPC: %4d rpc_execute flgs %x\n",
-				task->tk_pid, task->tk_flags);
-
-	if (!RPC_IS_RUNNING(task)) {
-		printk(KERN_WARNING "RPC: rpc_execute called for sleeping task!!\n");
-		return 0;
+	if (p == rq->idle) {
+		if (local_bh_count(cpu) || local_irq_count(cpu) > 1)
+			kstat.per_cpu_system[cpu] += system;
+#if CONFIG_SMP
+		idle_tick();
+#endif
+		return;
 	}
+	if (TASK_NICE(p) > 0)
+		kstat.per_cpu_nice[cpu] += user_tick;
+	else
+		kstat.per_cpu_user[cpu] += user_tick;
+	kstat.per_cpu_system[cpu] += system;
 
- restarted:
-	while (1) {
+	/* Task might have expired already, but not scheduled off yet */
+	if (p->array != rq->active) {
+		set_tsk_need_resched(p);
+		return;
+	}
+	spin_lock(&rq->lock);
+	if (unlikely(rt_task(p))) {
 		/*
-		 * Execute any pending callback.
+		 * RR tasks need a special form of timeslice management.
+		 * FIFO tasks have no timeslices.
 		 */
-		if (RPC_DO_CALLBACK(task)) {
-			/* Define a callback save pointer */
-			void (*save_callback)(struct rpc_task *);
-	
-			/* 
-			 * If a callback exists, save it, reset it,
-			 * call it.
-			 * The save is needed to stop from resetting
-			 * another callback set within the callback handler
-			 * - Dave
-			 */
-			save_callback=task->tk_callback;
-			task->tk_callback=NULL;
-			save_callback(task);
+		if ((p->policy == SCHED_RR) && !--p->time_slice) {
+			p->time_slice = TASK_TIMESLICE(p);
+			p->first_time_slice = 0;
+			set_tsk_need_resched(p);
+
+			/* put it at the end of the queue: */
+			dequeue_task(p, rq->active);
+			enqueue_task(p, rq->active);
 		}
-
-		/*
-		 * Perform the next FSM step.
-		 * tk_action may be NULL when the task has been killed
-		 * by someone else.
-		 */
-		if (RPC_IS_RUNNING(task)) {
-			/*
-			 * Garbage collection of pending timers...
-			 */
-			rpc_delete_timer(task);
-			if (!task->tk_action)
-				break;
-			task->tk_action(task);
-		}
-
-		/*
-		 * Check whether task is sleeping.
-		 */
-		spin_lock_bh(&rpc_queue_lock);
-		if (!RPC_IS_RUNNING(task)) {
-			rpc_set_sleeping(task);
-			if (RPC_IS_ASYNC(task)) {
-				spin_unlock_bh(&rpc_queue_lock);
-				return 0;
-			}
-		}
-		spin_unlock_bh(&rpc_queue_lock);
-
-		while (RPC_IS_SLEEPING(task)) {
-			/* sync task: sleep here */
-			dprintk("RPC: %4d sync task going to sleep\n",
-							task->tk_pid);
-			if (current->pid == rpciod_pid)
-				printk(KERN_ERR "RPC: rpciod waiting on sync task!\n");
-
-			__wait_event(task->tk_wait, !RPC_IS_SLEEPING(task));
-			dprintk("RPC: %4d sync task resuming\n", task->tk_pid);
-
-			/*
-			 * When a sync task receives a signal, it exits with
-			 * -ERESTARTSYS. In order to catch any callbacks that
-			 * clean up after sleeping on some queue, we don't
-			 * break the loop here, but go around once more.
-			 */
-			if (task->tk_client->cl_intr && signalled()) {
-				dprintk("RPC: %4d got signal\n", task->tk_pid);
-				task->tk_flags |= RPC_TASK_KILLED;
-				rpc_exit(task, -ERESTARTSYS);
-				rpc_wake_up_task(task);
-			}
-		}
+		goto out;
 	}
+	/*
+	 * The task was running during this tick - update the
+	 * time slice counter and the sleep average. Note: we
+	 * do not update a process's priority until it either
+	 * goes to sleep or uses up its timeslice. This makes
+	 * it possible for interactive tasks to use up their
+	 * timeslices at their highest priority levels.
+	 */
+	if (p->sleep_avg)
+		p->sleep_avg--;
+	if (!--p->time_slice) {
+		dequeue_task(p, rq->active);
+		set_tsk_need_resched(p);
+		p->prio = effective_prio(p);
+		p->first_time_slice = 0;
+		p->time_slice = TASK_TIMESLICE(p);
 
-	if (task->tk_exit) {
-		task->tk_exit(task);
-		/* If tk_action is non-null, the user wants us to restart */
-		if (task->tk_action) {
-			if (!RPC_ASSASSINATED(task)) {
-				/* Release RPC slot and buffer memory */
-				if (task->tk_rqstp)
-					xprt_release(task);
-				if (task->tk_buffer) {
-					rpc_free(task->tk_buffer);
-					task->tk_buffer = NULL;
-				}
-				goto restarted;
-			}
-			printk(KERN_ERR "RPC: dead task tries to walk away.\n");
-		}
+		if (!TASK_INTERACTIVE(p) || EXPIRED_STARVING(rq)) {
+			if (!rq->expired_timestamp)
+				rq->expired_timestamp = jiffies;
+			enqueue_task(p, rq->expired);
+		} else
+			enqueue_task(p, rq->active);
 	}
-
-	dprintk("RPC: %4d exit() = %d\n", task->tk_pid, task->tk_status);
-	status = task->tk_status;
-
-	/* Release all resources associated with the task */
-	rpc_release_task(task);
-
-	return status;
+out:
+#if CONFIG_SMP
+	if (!(jiffies % BUSY_REBALANCE_TICK))
+		load_balance(rq, 0);
+#endif
+	spin_unlock(&rq->lock);
 }
 
-/*
- * User-visible entry point to the scheduler.
- *
- * This may be called recursively if e.g. an async NFS task updates
- * the attributes and finds that dirty pages must be flushed.
- * NOTE: Upon exit of this function the task is guaranteed to be
- *	 released. In particular note that tk_release() will have
- *	 been called, so your task memory may have been freed.
- */
-int
-rpc_execute(struct rpc_task *task)
-{
-	int status = -EIO;
-	if (rpc_inhibit) {
-		printk(KERN_INFO "RPC: execution inhibited!\n");
-		goto out_release;
-	}
-
-	status = -EWOULDBLOCK;
-	if (task->tk_active) {
-		printk(KERN_ERR "RPC: active task was run twice!\n");
-		goto out_err;
-	}
-
-	task->tk_active = 1;
-	rpc_set_running(task);
-	return __rpc_execute(task);
- out_release:
-	rpc_release_task(task);
- out_err:
-	return status;
-}
+void scheduling_functions_start_here(void) { }
 
 /*
- * This is our own little scheduler for async RPC tasks.
+ * 'schedule()' is the main scheduler function.
  */
-static void
-__rpc_schedule(void)
+asmlinkage void schedule(void)
 {
-	struct rpc_task	*task;
-	int		count = 0;
+	task_t *prev, *next;
+	runqueue_t *rq;
+	prio_array_t *array;
+	list_t *queue;
+	int idx;
 
-	dprintk("RPC:      rpc_schedule enter\n");
-	while (1) {
-		spin_lock_bh(&rpc_queue_lock);
+	if (unlikely(in_interrupt()))
+		BUG();
 
-		task_for_first(task, &schedq.tasks) {
-			if (task->tk_lock) {
-				spin_unlock_bh(&rpc_queue_lock);
-				printk(KERN_ERR "RPC: Locked task was scheduled !!!!\n");
-#ifdef RPC_DEBUG			
-				rpc_debug = ~0;
-				rpc_show_tasks();
-#endif			
-				break;
-			}
-			__rpc_remove_wait_queue(task);
-			spin_unlock_bh(&rpc_queue_lock);
+need_resched:
+	prev = current;
+	rq = this_rq();
 
-			__rpc_execute(task);
-		} else {
-			spin_unlock_bh(&rpc_queue_lock);
+	release_kernel_lock(prev, smp_processor_id());
+	prepare_arch_schedule(prev);
+	prev->sleep_timestamp = jiffies;
+	spin_lock_irq(&rq->lock);
+
+	switch (prev->state) {
+	case TASK_INTERRUPTIBLE:
+		if (unlikely(signal_pending(prev))) {
+			prev->state = TASK_RUNNING;
 			break;
 		}
-
-		if (++count >= 200 || current->need_resched) {
-			count = 0;
-			schedule();
-		}
+	default:
+		deactivate_task(prev, rq);
+	case TASK_RUNNING:
+		;
 	}
-	dprintk("RPC:      rpc_schedule leave\n");
+#if CONFIG_SMP
+pick_next_task:
+#endif
+	if (unlikely(!rq->nr_running)) {
+#if CONFIG_SMP
+		load_balance(rq, 1);
+		if (rq->nr_running)
+			goto pick_next_task;
+#endif
+		next = rq->idle;
+		rq->expired_timestamp = 0;
+		goto switch_tasks;
+	}
+
+	array = rq->active;
+	if (unlikely(!array->nr_active)) {
+		/*
+		 * Switch the active and expired arrays.
+		 */
+		rq->active = rq->expired;
+		rq->expired = array;
+		array = rq->active;
+		rq->expired_timestamp = 0;
+	}
+
+	idx = sched_find_first_bit(array->bitmap);
+	queue = array->queue + idx;
+	next = list_entry(queue->next, task_t, run_list);
+
+switch_tasks:
+	prefetch(next);
+	clear_tsk_need_resched(prev);
+
+	if (likely(prev != next)) {
+		rq->nr_switches++;
+		rq->curr = next;
+	
+		prepare_arch_switch(rq);
+		prev = context_switch(prev, next);
+		barrier();
+		rq = this_rq();
+		finish_arch_switch(rq);
+	} else
+		spin_unlock_irq(&rq->lock);
+	finish_arch_schedule(prev);
+
+	reacquire_kernel_lock(current);
+	if (need_resched())
+		goto need_resched;
 }
 
 /*
- * Allocate memory for RPC purpose.
+ * The core wakeup function.  Non-exclusive wakeups (nr_exclusive == 0) just
+ * wake everything up.  If it's an exclusive wakeup (nr_exclusive == small +ve
+ * number) then we wake all the non-exclusive tasks and one exclusive task.
  *
- * This is yet another tricky issue: For sync requests issued by
- * a user process, we want to make kmalloc sleep if there isn't
- * enough memory. Async requests should not sleep too excessively
- * because that will block rpciod (but that's not dramatic when
- * it's starved of memory anyway). Finally, swapout requests should
- * never sleep at all, and should not trigger another swap_out
- * request through kmalloc which would just increase memory contention.
- *
- * I hope the following gets it right, which gives async requests
- * a slight advantage over sync requests (good for writeback, debatable
- * for readahead):
- *
- *   sync user requests:	GFP_KERNEL
- *   async requests:		GFP_RPC		(== GFP_NOFS)
- *   swap requests:		GFP_ATOMIC	(or new GFP_SWAPPER)
+ * There are circumstances in which we can try to wake a task which has already
+ * started to run but is not in state TASK_RUNNING.  try_to_wake_up() returns
+ * zero in this (rare) case, and we handle it by continuing to scan the queue.
  */
-void *
-rpc_allocate(unsigned int flags, unsigned int size)
+static inline void __wake_up_common(wait_queue_head_t *q, unsigned int mode, int nr_exclusive, int sync)
 {
-	u32	*buffer;
-	int	gfp;
+	struct list_head *tmp;
+	unsigned int state;
+	wait_queue_t *curr;
+	task_t *p;
 
-	if (flags & RPC_TASK_SWAPPER)
-		gfp = GFP_ATOMIC;
-	else if (flags & RPC_TASK_ASYNC)
-		gfp = GFP_RPC;
+	list_for_each(tmp, &q->task_list) {
+		curr = list_entry(tmp, wait_queue_t, task_list);
+		p = curr->task;
+		state = p->state;
+		if ((state & mode) && try_to_wake_up(p, sync) &&
+			((curr->flags & WQ_FLAG_EXCLUSIVE) && !--nr_exclusive))
+				break;
+	}
+}
+
+void __wake_up(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
+{
+	unsigned long flags;
+
+	if (unlikely(!q))
+		return;
+
+	spin_lock_irqsave(&q->lock, flags);
+	__wake_up_common(q, mode, nr_exclusive, 0);
+	spin_unlock_irqrestore(&q->lock, flags);
+}
+
+#if CONFIG_SMP
+
+void __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
+{
+	unsigned long flags;
+
+	if (unlikely(!q))
+		return;
+
+	spin_lock_irqsave(&q->lock, flags);
+	if (likely(nr_exclusive))
+		__wake_up_common(q, mode, nr_exclusive, 1);
 	else
-		gfp = GFP_KERNEL;
-
-	do {
-		if ((buffer = (u32 *) kmalloc(size, gfp)) != NULL) {
-			dprintk("RPC:      allocated buffer %p\n", buffer);
-			return buffer;
-		}
-		if ((flags & RPC_TASK_SWAPPER) && size <= sizeof(swap_buffer)
-		    && rpc_lock_swapbuf()) {
-			dprintk("RPC:      used last-ditch swap buffer\n");
-			return swap_buffer;
-		}
-		if (flags & RPC_TASK_ASYNC)
-			return NULL;
-		yield();
-	} while (!signalled());
-
-	return NULL;
+		__wake_up_common(q, mode, nr_exclusive, 0);
+	spin_unlock_irqrestore(&q->lock, flags);
 }
 
-void
-rpc_free(void *buffer)
+#endif
+ 
+void complete(struct completion *x)
 {
-	if (buffer != swap_buffer) {
-		kfree(buffer);
-		return;
-	}
-	rpc_unlock_swapbuf();
+	unsigned long flags;
+
+	spin_lock_irqsave(&x->wait.lock, flags);
+	x->done++;
+	__wake_up_common(&x->wait, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE, 1, 0);
+	spin_unlock_irqrestore(&x->wait.lock, flags);
 }
+
+void wait_for_completion(struct completion *x)
+{
+	spin_lock_irq(&x->wait.lock);
+	if (!x->done) {
+		DECLARE_WAITQUEUE(wait, current);
+
+		wait.flags |= WQ_FLAG_EXCLUSIVE;
+		__add_wait_queue_tail(&x->wait, &wait);
+		do {
+			__set_current_state(TASK_UNINTERRUPTIBLE);
+			spin_unlock_irq(&x->wait.lock);
+			schedule();
+			spin_lock_irq(&x->wait.lock);
+		} while (!x->done);
+		__remove_wait_queue(&x->wait, &wait);
+	}
+	x->done--;
+	spin_unlock_irq(&x->wait.lock);
+}
+
+#define	SLEEP_ON_VAR				\
+	unsigned long flags;			\
+	wait_queue_t wait;			\
+	init_waitqueue_entry(&wait, current);
+
+#define	SLEEP_ON_HEAD					\
+	spin_lock_irqsave(&q->lock,flags);		\
+	__add_wait_queue(q, &wait);			\
+	spin_unlock(&q->lock);
+
+#define	SLEEP_ON_TAIL						\
+	spin_lock_irq(&q->lock);				\
+	__remove_wait_queue(q, &wait);				\
+	spin_unlock_irqrestore(&q->lock, flags);
+
+void interruptible_sleep_on(wait_queue_head_t *q)
+{
+	SLEEP_ON_VAR
+
+	current->state = TASK_INTERRUPTIBLE;
+
+	SLEEP_ON_HEAD
+	schedule();
+	SLEEP_ON_TAIL
+}
+
+long interruptible_sleep_on_timeout(wait_queue_head_t *q, long timeout)
+{
+	SLEEP_ON_VAR
+
+	current->state = TASK_INTERRUPTIBLE;
+
+	SLEEP_ON_HEAD
+	timeout = schedule_timeout(timeout);
+	SLEEP_ON_TAIL
+
+	return timeout;
+}
+
+void sleep_on(wait_queue_head_t *q)
+{
+	SLEEP_ON_VAR
+	
+	current->state = TASK_UNINTERRUPTIBLE;
+
+	SLEEP_ON_HEAD
+	schedule();
+	SLEEP_ON_TAIL
+}
+
+long sleep_on_timeout(wait_queue_head_t *q, long timeout)
+{
+	SLEEP_ON_VAR
+	
+	current->state = TASK_UNINTERRUPTIBLE;
+
+	SLEEP_ON_HEAD
+	timeout = schedule_timeout(timeout);
+	SLEEP_ON_TAIL
+
+	return timeout;
+}
+
+void scheduling_functions_end_here(void) { }
+
+void set_user_nice(task_t *p, long nice)
+{
+	unsigned long flags;
+	prio_array_t *array;
+	runqueue_t *rq;
+
+	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
+		return;
+	/*
+	 * We have to be careful, if called from sys_setpriority(),
+	 * the task might be in the middle of scheduling on another CPU.
+	 */
+	rq = task_rq_lock(p, &flags);
+	if (rt_task(p)) {
+		p->static_prio = NICE_TO_PRIO(nice);
+		goto out_unlock;
+	}
+	array = p->array;
+	if (array)
+		dequeue_task(p, array);
+	p->static_prio = NICE_TO_PRIO(nice);
+	p->prio = NICE_TO_PRIO(nice);
+	if (array) {
+		enqueue_task(p, array);
+		/*
+		 * If the task is running and lowered its priority,
+		 * or increased its priority then reschedule its CPU:
+		 */
+		if ((NICE_TO_PRIO(nice) < p->static_prio) || (p == rq->curr))
+			resched_task(rq->curr);
+	}
+out_unlock:
+	task_rq_unlock(rq, &flags);
+}
+
+#ifndef __alpha__
 
 /*
- * Creation and deletion of RPC task structures
+ * This has been replaced by sys_setpriority.  Maybe it should be
+ * moved into the arch dependent tree for those ports that require
+ * it for backward compatibility?
  */
-inline void
-rpc_init_task(struct rpc_task *task, struct rpc_clnt *clnt,
-				rpc_action callback, int flags)
+
+asmlinkage long sys_nice(int increment)
 {
-	memset(task, 0, sizeof(*task));
-	init_timer(&task->tk_timer);
-	task->tk_timer.data     = (unsigned long) task;
-	task->tk_timer.function = (void (*)(unsigned long)) rpc_run_timer;
-	task->tk_client = clnt;
-	task->tk_flags  = flags;
-	task->tk_exit   = callback;
-	init_waitqueue_head(&task->tk_wait);
-	if (current->uid != current->fsuid || current->gid != current->fsgid)
-		task->tk_flags |= RPC_TASK_SETUID;
+	long nice;
 
-	/* Initialize retry counters */
-	task->tk_garb_retry = 2;
-	task->tk_cred_retry = 2;
-	task->tk_suid_retry = 1;
+	/*
+	 *	Setpriority might change our priority at the same moment.
+	 *	We don't have to worry. Conceptually one call occurs first
+	 *	and we have a single winner.
+	 */
+	if (increment < 0) {
+		if (!capable(CAP_SYS_NICE))
+			return -EPERM;
+		if (increment < -40)
+			increment = -40;
+	}
+	if (increment > 40)
+		increment = 40;
 
-	/* Add to global list of all tasks */
-	spin_lock(&rpc_sched_lock);
-	list_add(&task->tk_task, &all_tasks);
-	spin_unlock(&rpc_sched_lock);
+	nice = PRIO_TO_NICE(current->static_prio) + increment;
+	if (nice < -20)
+		nice = -20;
+	if (nice > 19)
+		nice = 19;
+	set_user_nice(current, nice);
+	return 0;
+}
 
-	if (clnt)
-		atomic_inc(&clnt->cl_users);
-
-#ifdef RPC_DEBUG
-	task->tk_magic = 0xf00baa;
-	task->tk_pid = rpc_task_id++;
 #endif
-	dprintk("RPC: %4d new task procpid %d\n", task->tk_pid,
-				current->pid);
-}
-
-static void
-rpc_default_free_task(struct rpc_task *task)
-{
-	dprintk("RPC: %4d freeing task\n", task->tk_pid);
-	rpc_free(task);
-}
 
 /*
- * Create a new task for the specified client.  We have to
- * clean up after an allocation failure, as the client may
- * have specified "oneshot".
+ * This is the priority value as seen by users in /proc
+ *
+ * RT tasks are offset by -200. Normal tasks are centered
+ * around 0, value goes from -16 to +15.
  */
-struct rpc_task *
-rpc_new_task(struct rpc_clnt *clnt, rpc_action callback, int flags)
+int task_prio(task_t *p)
 {
-	struct rpc_task	*task;
-
-	task = (struct rpc_task *) rpc_allocate(flags, sizeof(*task));
-	if (!task)
-		goto cleanup;
-
-	rpc_init_task(task, clnt, callback, flags);
-
-	/* Replace tk_release */
-	task->tk_release = rpc_default_free_task;
-
-	dprintk("RPC: %4d allocated task\n", task->tk_pid);
-	task->tk_flags |= RPC_TASK_DYNAMIC;
-out:
-	return task;
-
-cleanup:
-	/* Check whether to release the client */
-	if (clnt) {
-		printk("rpc_new_task: failed, users=%d, oneshot=%d\n",
-			atomic_read(&clnt->cl_users), clnt->cl_oneshot);
-		atomic_inc(&clnt->cl_users); /* pretend we were used ... */
-		rpc_release_client(clnt);
-	}
-	goto out;
+	return p->prio - MAX_USER_RT_PRIO;
 }
 
-void
-rpc_release_task(struct rpc_task *task)
+int task_nice(task_t *p)
 {
-	dprintk("RPC: %4d release task\n", task->tk_pid);
+	return TASK_NICE(p);
+}
 
-#ifdef RPC_DEBUG
-	if (task->tk_magic != 0xf00baa) {
-		printk(KERN_ERR "RPC: attempt to release a non-existing task!\n");
-		rpc_debug = ~0;
-		rpc_show_tasks();
-		return;
+int idle_cpu(int cpu)
+{
+	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+}
+
+static inline task_t *find_process_by_pid(pid_t pid)
+{
+	return pid ? find_task_by_pid(pid) : current;
+}
+
+static int setscheduler(pid_t pid, int policy, struct sched_param *param)
+{
+	struct sched_param lp;
+	int retval = -EINVAL;
+	prio_array_t *array;
+	unsigned long flags;
+	runqueue_t *rq;
+	task_t *p;
+
+	if (!param || pid < 0)
+		goto out_nounlock;
+
+	retval = -EFAULT;
+	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
+		goto out_nounlock;
+
+	/*
+	 * We play safe to avoid deadlocks.
+	 */
+	read_lock_irq(&tasklist_lock);
+
+	p = find_process_by_pid(pid);
+
+	retval = -ESRCH;
+	if (!p)
+		goto out_unlock_tasklist;
+
+	/*
+	 * To be able to change p->policy safely, the apropriate
+	 * runqueue lock must be held.
+	 */
+	rq = task_rq_lock(p, &flags);
+
+	if (policy < 0)
+		policy = p->policy;
+	else {
+		retval = -EINVAL;
+		if (policy != SCHED_FIFO && policy != SCHED_RR &&
+				policy != SCHED_OTHER)
+			goto out_unlock;
 	}
-#endif
 
-	/* Remove from global task list */
-	spin_lock(&rpc_sched_lock);
-	list_del(&task->tk_task);
-	spin_unlock(&rpc_sched_lock);
+	/*
+	 * Valid priorities for SCHED_FIFO and SCHED_RR are
+	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
+	 */
+	retval = -EINVAL;
+	if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
+		goto out_unlock;
+	if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
+		goto out_unlock;
 
-	/* Protect the execution below. */
-	spin_lock_bh(&rpc_queue_lock);
+	retval = -EPERM;
+	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
+	    !capable(CAP_SYS_NICE))
+		goto out_unlock;
+	if ((current->euid != p->euid) && (current->euid != p->uid) &&
+	    !capable(CAP_SYS_NICE))
+		goto out_unlock;
 
-	/* Disable timer to prevent zombie wakeup */
-	__rpc_disable_timer(task);
+	array = p->array;
+	if (array)
+		deactivate_task(p, task_rq(p));
+	retval = 0;
+	p->policy = policy;
+	p->rt_priority = lp.sched_priority;
+	if (policy != SCHED_OTHER)
+		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+	else
+		p->prio = p->static_prio;
+	if (array)
+		activate_task(p, task_rq(p));
 
-	/* Remove from any wait queue we're still on */
-	__rpc_remove_wait_queue(task);
+out_unlock:
+	task_rq_unlock(rq, &flags);
+out_unlock_tasklist:
+	read_unlock_irq(&tasklist_lock);
 
-	task->tk_active = 0;
+out_nounlock:
+	return retval;
+}
 
-	spin_unlock_bh(&rpc_queue_lock);
+asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
+				      struct sched_param *param)
+{
+	return setscheduler(pid, policy, param);
+}
 
-	/* Synchronously delete any running timer */
-	rpc_delete_timer(task);
+asmlinkage long sys_sched_setparam(pid_t pid, struct sched_param *param)
+{
+	return setscheduler(pid, -1, param);
+}
 
-	/* Release resources */
-	if (task->tk_rqstp)
-		xprt_release(task);
-	if (task->tk_msg.rpc_cred)
-		rpcauth_unbindcred(task);
-	if (task->tk_buffer) {
-		rpc_free(task->tk_buffer);
-		task->tk_buffer = NULL;
-	}
-	if (task->tk_client) {
-		rpc_release_client(task->tk_client);
-		task->tk_client = NULL;
-	}
+asmlinkage long sys_sched_getscheduler(pid_t pid)
+{
+	int retval = -EINVAL;
+	task_t *p;
 
-#ifdef RPC_DEBUG
-	task->tk_magic = 0;
-#endif
-	if (task->tk_release)
-		task->tk_release(task);
+	if (pid < 0)
+		goto out_nounlock;
+
+	retval = -ESRCH;
+	read_lock(&tasklist_lock);
+	p = find_process_by_pid(pid);
+	if (p)
+		retval = p->policy;
+	read_unlock(&tasklist_lock);
+
+out_nounlock:
+	return retval;
+}
+
+asmlinkage long sys_sched_getparam(pid_t pid, struct sched_param *param)
+{
+	struct sched_param lp;
+	int retval = -EINVAL;
+	task_t *p;
+
+	if (!param || pid < 0)
+		goto out_nounlock;
+
+	read_lock(&tasklist_lock);
+	p = find_process_by_pid(pid);
+	retval = -ESRCH;
+	if (!p)
+		goto out_unlock;
+	lp.sched_priority = p->rt_priority;
+	read_unlock(&tasklist_lock);
+
+	/*
+	 * This one might sleep, we cannot do it with a spinlock held ...
+	 */
+	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+
+out_nounlock:
+	return retval;
+
+out_unlock:
+	read_unlock(&tasklist_lock);
+	return retval;
 }
 
 /**
- * rpc_find_parent - find the parent of a child task.
- * @child: child task
- *
- * Checks that the parent task is still sleeping on the
- * queue 'childq'. If so returns a pointer to the parent.
- * Upon failure returns NULL.
- *
- * Caller must hold rpc_queue_lock
+ * sys_sched_setaffinity - set the cpu affinity of a process
+ * @pid: pid of the process
+ * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+ * @user_mask_ptr: user-space pointer to the new cpu mask
  */
-static inline struct rpc_task *
-rpc_find_parent(struct rpc_task *child)
+asmlinkage int sys_sched_setaffinity(pid_t pid, unsigned int len,
+				      unsigned long *user_mask_ptr)
 {
-	struct rpc_task	*task, *parent;
-	struct list_head *le;
+	unsigned long new_mask;
+	int retval;
+	task_t *p;
 
-	parent = (struct rpc_task *) child->tk_calldata;
-	task_for_each(task, le, &childq.tasks)
-		if (task == parent)
-			return parent;
+	if (len < sizeof(new_mask))
+		return -EINVAL;
 
-	return NULL;
-}
+	if (copy_from_user(&new_mask, user_mask_ptr, sizeof(new_mask)))
+		return -EFAULT;
 
-static void
-rpc_child_exit(struct rpc_task *child)
-{
-	struct rpc_task	*parent;
+	new_mask &= cpu_online_map;
+	if (!new_mask)
+		return -EINVAL;
 
-	spin_lock_bh(&rpc_queue_lock);
-	if ((parent = rpc_find_parent(child)) != NULL) {
-		parent->tk_status = child->tk_status;
-		__rpc_wake_up_task(parent);
+	read_lock(&tasklist_lock);
+
+	p = find_process_by_pid(pid);
+	if (!p) {
+		read_unlock(&tasklist_lock);
+		return -ESRCH;
 	}
-	spin_unlock_bh(&rpc_queue_lock);
-}
-
-/*
- * Note: rpc_new_task releases the client after a failure.
- */
-struct rpc_task *
-rpc_new_child(struct rpc_clnt *clnt, struct rpc_task *parent)
-{
-	struct rpc_task	*task;
-
-	task = rpc_new_task(clnt, NULL, RPC_TASK_ASYNC | RPC_TASK_CHILD);
-	if (!task)
-		goto fail;
-	task->tk_exit = rpc_child_exit;
-	task->tk_calldata = parent;
-	return task;
-
-fail:
-	parent->tk_status = -ENOMEM;
-	return NULL;
-}
-
-void
-rpc_run_child(struct rpc_task *task, struct rpc_task *child, rpc_action func)
-{
-	spin_lock_bh(&rpc_queue_lock);
-	/* N.B. Is it possible for the child to have already finished? */
-	__rpc_sleep_on(&childq, task, func, NULL);
-	rpc_schedule_run(child);
-	spin_unlock_bh(&rpc_queue_lock);
-}
-
-/*
- * Kill all tasks for the given client.
- * XXX: kill their descendants as well?
- */
-void
-rpc_killall_tasks(struct rpc_clnt *clnt)
-{
-	struct rpc_task	*rovr;
-	struct list_head *le;
-
-	dprintk("RPC:      killing all tasks for client %p\n", clnt);
 
 	/*
-	 * Spin lock all_tasks to prevent changes...
+	 * It is not safe to call set_cpus_allowed with the
+	 * tasklist_lock held.  We will bump the task_struct's
+	 * usage count and then drop tasklist_lock.
 	 */
-	spin_lock(&rpc_sched_lock);
-	alltask_for_each(rovr, le, &all_tasks)
-		if (!clnt || rovr->tk_client == clnt) {
-			rovr->tk_flags |= RPC_TASK_KILLED;
-			rpc_exit(rovr, -EIO);
-			rpc_wake_up_task(rovr);
+	get_task_struct(p);
+	read_unlock(&tasklist_lock);
+
+	if (!capable(CAP_SYS_NICE))
+		new_mask &= p->cpus_allowed_mask;
+	if (capable(CAP_SYS_NICE))
+		p->cpus_allowed_mask |= new_mask;
+	if (!new_mask) {
+		retval = -EINVAL;
+		goto out_unlock;
+	}
+
+	retval = -EPERM;
+	if ((current->euid != p->euid) && (current->euid != p->uid) &&
+			!capable(CAP_SYS_NICE))
+		goto out_unlock;
+
+	retval = 0;
+	set_cpus_allowed(p, new_mask);
+
+out_unlock:
+	free_task_struct(p);
+	return retval;
+}
+
+/**
+ * sys_sched_getaffinity - get the cpu affinity of a process
+ * @pid: pid of the process
+ * @len: length in bytes of the bitmask pointed to by user_mask_ptr
+ * @user_mask_ptr: user-space pointer to hold the current cpu mask
+ */
+asmlinkage int sys_sched_getaffinity(pid_t pid, unsigned int len,
+				      unsigned long *user_mask_ptr)
+{
+	unsigned int real_len;
+	unsigned long mask;
+	int retval;
+	task_t *p;
+
+	real_len = sizeof(mask);
+	if (len < real_len)
+		return -EINVAL;
+
+	read_lock(&tasklist_lock);
+
+	retval = -ESRCH;
+	p = find_process_by_pid(pid);
+	if (!p)
+		goto out_unlock;
+
+	retval = 0;
+	mask = p->cpus_allowed & cpu_online_map;
+
+out_unlock:
+	read_unlock(&tasklist_lock);
+	if (retval)
+		return retval;
+	if (copy_to_user(user_mask_ptr, &mask, real_len))
+		return -EFAULT;
+	return real_len;
+}
+
+asmlinkage long sys_sched_yield(void)
+{
+	runqueue_t *rq = this_rq_lock();
+	prio_array_t *array = current->array;
+	int i;
+
+	if (unlikely(rt_task(current))) {
+		list_del(&current->run_list);
+		list_add_tail(&current->run_list, array->queue + current->prio);
+		goto out_unlock;
+	}
+
+	list_del(&current->run_list);
+	if (!list_empty(array->queue + current->prio)) {
+		list_add(&current->run_list, array->queue[current->prio].next);
+		goto out_unlock;
+	}
+	__clear_bit(current->prio, array->bitmap);
+
+	i = sched_find_first_bit(array->bitmap);
+
+	if (i == MAX_PRIO || i <= current->prio)
+		i = current->prio;
+	else
+		current->prio = i;
+
+	list_add(&current->run_list, array->queue[i].next);
+	__set_bit(i, array->bitmap);
+
+out_unlock:
+	spin_unlock(&rq->lock);
+
+	schedule();
+
+	return 0;
+}
+
+
+asmlinkage long sys_sched_get_priority_max(int policy)
+{
+	int ret = -EINVAL;
+
+	switch (policy) {
+	case SCHED_FIFO:
+	case SCHED_RR:
+		ret = MAX_USER_RT_PRIO-1;
+		break;
+	case SCHED_OTHER:
+		ret = 0;
+		break;
+	}
+	return ret;
+}
+
+asmlinkage long sys_sched_get_priority_min(int policy)
+{
+	int ret = -EINVAL;
+
+	switch (policy) {
+	case SCHED_FIFO:
+	case SCHED_RR:
+		ret = 1;
+		break;
+	case SCHED_OTHER:
+		ret = 0;
+	}
+	return ret;
+}
+
+asmlinkage long sys_sched_rr_get_interval(pid_t pid, struct timespec *interval)
+{
+	int retval = -EINVAL;
+	struct timespec t;
+	task_t *p;
+
+	if (pid < 0)
+		goto out_nounlock;
+
+	retval = -ESRCH;
+	read_lock(&tasklist_lock);
+	p = find_process_by_pid(pid);
+	if (p)
+		jiffies_to_timespec(p->policy & SCHED_FIFO ?
+					 0 : TASK_TIMESLICE(p), &t);
+	read_unlock(&tasklist_lock);
+	if (p)
+		retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
+out_nounlock:
+	return retval;
+}
+
+static void show_task(task_t * p)
+{
+	unsigned long free = 0;
+	int state;
+	static const char * stat_nam[] = { "R", "S", "D", "Z", "T", "W" };
+
+	printk("%-13.13s ", p->comm);
+	state = p->state ? __ffs(p->state) + 1 : 0;
+	if (((unsigned) state) < sizeof(stat_nam)/sizeof(char *))
+		printk(stat_nam[state]);
+	else
+		printk(" ");
+#if (BITS_PER_LONG == 32)
+	if (p == current)
+		printk(" current  ");
+	else
+		printk(" %08lX ", thread_saved_pc(&p->thread));
+#else
+	if (p == current)
+		printk("   current task   ");
+	else
+		printk(" %016lx ", thread_saved_pc(&p->thread));
+#endif
+	{
+		unsigned long * n = (unsigned long *) (p+1);
+		while (!*n)
+			n++;
+		free = (unsigned long) n - (unsigned long)(p+1);
+	}
+	printk("%5lu %5d %6d ", free, p->pid, p->p_pptr->pid);
+	if (p->p_cptr)
+		printk("%5d ", p->p_cptr->pid);
+	else
+		printk("      ");
+	if (p->p_ysptr)
+		printk("%7d", p->p_ysptr->pid);
+	else
+		printk("       ");
+	if (p->p_osptr)
+		printk(" %5d", p->p_osptr->pid);
+	else
+		printk("      ");
+	if (!p->mm)
+		printk(" (L-TLB)\n");
+	else
+		printk(" (NOTLB)\n");
+
+	{
+		extern void show_trace_task(task_t *tsk);
+		show_trace_task(p);
+	}
+}
+
+char * render_sigset_t(sigset_t *set, char *buffer)
+{
+	int i = _NSIG, x;
+	do {
+		i -= 4, x = 0;
+		if (sigismember(set, i+1)) x |= 1;
+		if (sigismember(set, i+2)) x |= 2;
+		if (sigismember(set, i+3)) x |= 4;
+		if (sigismember(set, i+4)) x |= 8;
+		*buffer++ = (x < 10 ? '0' : 'a' - 10) + x;
+	} while (i >= 4);
+	*buffer = 0;
+	return buffer;
+}
+
+void show_state(void)
+{
+	task_t *p;
+
+#if (BITS_PER_LONG == 32)
+	printk("\n"
+	       "                         free                        sibling\n");
+	printk("  task             PC    stack   pid father child younger older\n");
+#else
+	printk("\n"
+	       "                                 free                        sibling\n");
+	printk("  task                 PC        stack   pid father child younger older\n");
+#endif
+	read_lock(&tasklist_lock);
+	for_each_task(p) {
+		/*
+		 * reset the NMI-timeout, listing all files on a slow
+		 * console might take alot of time:
+		 */
+		touch_nmi_watchdog();
+		show_task(p);
+	}
+	read_unlock(&tasklist_lock);
+}
+
+/*
+ * double_rq_lock - safely lock two runqueues
+ *
+ * Note this does not disable interrupts like task_rq_lock,
+ * you need to do so manually before calling.
+ */
+static inline void double_rq_lock(runqueue_t *rq1, runqueue_t *rq2)
+{
+	if (rq1 == rq2)
+		spin_lock(&rq1->lock);
+	else {
+		if (rq1 < rq2) {
+			spin_lock(&rq1->lock);
+			spin_lock(&rq2->lock);
+		} else {
+			spin_lock(&rq2->lock);
+			spin_lock(&rq1->lock);
 		}
-	spin_unlock(&rpc_sched_lock);
+	}
 }
-
-static DECLARE_MUTEX_LOCKED(rpciod_running);
-
-static inline int
-rpciod_task_pending(void)
-{
-	return !list_empty(&schedq.tasks);
-}
-
 
 /*
- * This is the rpciod kernel thread
+ * double_rq_unlock - safely unlock two runqueues
+ *
+ * Note this does not restore interrupts like task_rq_unlock,
+ * you need to do so manually after calling.
  */
-static int
-rpciod(void *ptr)
+static inline void double_rq_unlock(runqueue_t *rq1, runqueue_t *rq2)
 {
-	wait_queue_head_t *assassin = (wait_queue_head_t*) ptr;
-	int		rounds = 0;
+	spin_unlock(&rq1->lock);
+	if (rq1 != rq2)
+		spin_unlock(&rq2->lock);
+}
 
-	MOD_INC_USE_COUNT;
-	lock_kernel();
+void __init init_idle(task_t *idle, int cpu)
+{
+	runqueue_t *idle_rq = cpu_rq(cpu), *rq = cpu_rq(idle->cpu);
+	unsigned long flags;
+
+	__save_flags(flags);
+	__cli();
+	double_rq_lock(idle_rq, rq);
+
+	idle_rq->curr = idle_rq->idle = idle;
+	deactivate_task(idle, rq);
+	idle->array = NULL;
+	idle->prio = MAX_PRIO;
+	idle->state = TASK_RUNNING;
+	idle->cpu = cpu;
+	double_rq_unlock(idle_rq, rq);
+	set_tsk_need_resched(idle);
+	__restore_flags(flags);
+}
+
+extern void init_timervecs(void);
+extern void timer_bh(void);
+extern void tqueue_bh(void);
+extern void immediate_bh(void);
+
+void __init sched_init(void)
+{
+	runqueue_t *rq;
+	int i, j, k;
+
+	for (i = 0; i < NR_CPUS; i++) {
+		prio_array_t *array;
+
+		rq = cpu_rq(i);
+		rq->active = rq->arrays;
+		rq->expired = rq->arrays + 1;
+		spin_lock_init(&rq->lock);
+		INIT_LIST_HEAD(&rq->migration_queue);
+
+		for (j = 0; j < 2; j++) {
+			array = rq->arrays + j;
+			for (k = 0; k < MAX_PRIO; k++) {
+				INIT_LIST_HEAD(array->queue + k);
+				__clear_bit(k, array->bitmap);
+			}
+			// delimiter for bitsearch
+			__set_bit(MAX_PRIO, array->bitmap);
+		}
+	}
 	/*
-	 * Let our maker know we're running ...
+	 * We have to do a little magic to get the first
+	 * process right in SMP mode.
 	 */
-	rpciod_pid = current->pid;
-	up(&rpciod_running);
+	rq = this_rq();
+	rq->curr = current;
+	rq->idle = current;
+	wake_up_process(current);
+
+	init_timervecs();
+	init_bh(TIMER_BH, timer_bh);
+	init_bh(TQUEUE_BH, tqueue_bh);
+	init_bh(IMMEDIATE_BH, immediate_bh);
+
+	/*
+	 * The boot idle thread does lazy MMU switching as well:
+	 */
+	atomic_inc(&init_mm.mm_count);
+	enter_lazy_tlb(&init_mm, current, smp_processor_id());
+}
+
+#if CONFIG_SMP
+
+/*
+ * This is how migration works:
+ *
+ * 1) we queue a migration_req_t structure in the source CPU's
+ *    runqueue and wake up that CPU's migration thread.
+ * 2) we down() the locked semaphore => thread blocks.
+ * 3) migration thread wakes up (implicitly it forces the migrated
+ *    thread off the CPU)
+ * 4) it gets the migration request and checks whether the migrated
+ *    task is still in the wrong runqueue.
+ * 5) if it's in the wrong runqueue then the migration thread removes
+ *    it and puts it into the right queue.
+ * 6) migration thread up()s the semaphore.
+ * 7) we wake up and the migration is done.
+ */
+
+typedef struct {
+	list_t list;
+	task_t *task;
+	struct semaphore sem;
+} migration_req_t;
+
+/*
+ * Change a given task's CPU affinity. Migrate the process to a
+ * proper CPU and schedule it away if the CPU it's executing on
+ * is removed from the allowed bitmask.
+ *
+ * NOTE: the caller must have a valid reference to the task, the
+ * task must not exit() & deallocate itself prematurely.  The
+ * call is not atomic; no spinlocks may be held.
+ */
+void set_cpus_allowed(task_t *p, unsigned long new_mask)
+{
+	unsigned long flags;
+	migration_req_t req;
+	runqueue_t *rq;
+
+	new_mask &= cpu_online_map;
+	if (!new_mask)
+		BUG();
+
+	rq = task_rq_lock(p, &flags);
+	p->cpus_allowed = new_mask;
+	/*
+	 * Can the task run on the task's current CPU? If not then
+	 * migrate the process off to a proper CPU.
+	 */
+	if (new_mask & (1UL << p->cpu)) {
+		task_rq_unlock(rq, &flags);
+		goto out;
+	}
+	/*
+	 * If the task is not on a runqueue (and not running), then
+	 * it is sufficient to simply update the task's cpu field.
+	 */
+	if (!p->array && (p != rq->curr)) {
+		p->cpu = __ffs(p->cpus_allowed);
+		task_rq_unlock(rq, &flags);
+		goto out;
+	}
+	init_MUTEX_LOCKED(&req.sem);
+	req.task = p;
+	list_add(&req.list, &rq->migration_queue);
+	task_rq_unlock(rq, &flags);
+	wake_up_process(rq->migration_thread);
+
+	down(&req.sem);
+out:
+}
+
+static int migration_thread(void * bind_cpu)
+{
+	struct sched_param param = { sched_priority: MAX_RT_PRIO-1 };
+	int cpu = cpu_logical_map((int) (long) bind_cpu);
+	runqueue_t *rq;
+	int ret;
 
 	daemonize();
+	sigfillset(&current->blocked);
+	set_fs(KERNEL_DS);
+	/*
+	 * The first migration thread is started on CPU #0. This one can
+	 * migrate the other migration threads to their destination CPUs.
+	 */
+	if (cpu != 0) {
+		while (!cpu_rq(cpu_logical_map(0))->migration_thread)
+			yield();
+		set_cpus_allowed(current, 1UL << cpu);
+	}
+	printk("migration_task %d on cpu=%d\n", cpu, smp_processor_id());
+	ret = setscheduler(0, SCHED_FIFO, &param);
 
-	spin_lock_irq(&current->sigmask_lock);
-	siginitsetinv(&current->blocked, sigmask(SIGKILL));
-	recalc_sigpending(current);
-	spin_unlock_irq(&current->sigmask_lock);
+	rq = this_rq();
+	rq->migration_thread = current;
 
-	strcpy(current->comm, "rpciod");
+	sprintf(current->comm, "migration_CPU%d", smp_processor_id());
 
-	dprintk("RPC: rpciod starting (pid %d)\n", rpciod_pid);
-	while (rpciod_users) {
-		if (signalled()) {
-			rpciod_killall();
-			flush_signals(current);
-		}
-		__rpc_schedule();
+	for (;;) {
+		runqueue_t *rq_src, *rq_dest;
+		struct list_head *head;
+		int cpu_src, cpu_dest;
+		migration_req_t *req;
+		unsigned long flags;
+		task_t *p;
 
-		if (++rounds >= 64) {	/* safeguard */
+		spin_lock_irqsave(&rq->lock, flags);
+		head = &rq->migration_queue;
+		current->state = TASK_INTERRUPTIBLE;
+		if (list_empty(head)) {
+			spin_unlock_irqrestore(&rq->lock, flags);
 			schedule();
-			rounds = 0;
+			continue;
 		}
+		req = list_entry(head->next, migration_req_t, list);
+		list_del_init(head->next);
+		spin_unlock_irqrestore(&rq->lock, flags);
 
-		if (!rpciod_task_pending()) {
-			dprintk("RPC: rpciod back to sleep\n");
-			wait_event_interruptible(rpciod_idle, rpciod_task_pending());
-			dprintk("RPC: switch to rpciod\n");
-			rounds = 0;
+		p = req->task;
+		cpu_dest = __ffs(p->cpus_allowed);
+		rq_dest = cpu_rq(cpu_dest);
+repeat:
+		cpu_src = p->cpu;
+		rq_src = cpu_rq(cpu_src);
+
+		local_irq_save(flags);
+		double_rq_lock(rq_src, rq_dest);
+		if (p->cpu != cpu_src) {
+			double_rq_unlock(rq_src, rq_dest);
+			local_irq_restore(flags);
+			goto repeat;
 		}
+		if (rq_src == rq) {
+			p->cpu = cpu_dest;
+			if (p->array) {
+				deactivate_task(p, rq_src);
+				activate_task(p, rq_dest);
+			}
+		}
+		double_rq_unlock(rq_src, rq_dest);
+		local_irq_restore(flags);
+
+		up(&req->sem);
 	}
+}
 
-	dprintk("RPC: rpciod shutdown commences\n");
-	if (!list_empty(&all_tasks)) {
-		printk(KERN_ERR "rpciod: active tasks at shutdown?!\n");
-		rpciod_killall();
+void __init migration_init(void)
+{
+	int cpu;
+
+	current->cpus_allowed = 1UL << cpu_logical_map(0);
+	for (cpu = 0; cpu < smp_num_cpus; cpu++)
+		if (kernel_thread(migration_thread, (void *) (long) cpu,
+				CLONE_FS | CLONE_FILES | CLONE_SIGNAL) < 0)
+			BUG();
+	current->cpus_allowed = -1L;
+
+	for (cpu = 0; cpu < smp_num_cpus; cpu++)
+		while (!cpu_rq(cpu_logical_map(cpu))->migration_thread)
+			schedule_timeout(2);
+}
+#endif
+
+#if LOWLATENCY_NEEDED
+#if LOWLATENCY_DEBUG
+
+static struct lolat_stats_t *lolat_stats_head;
+static spinlock_t lolat_stats_lock = SPIN_LOCK_UNLOCKED;
+
+void set_running_and_schedule(struct lolat_stats_t *stats)
+{
+	spin_lock(&lolat_stats_lock);
+	if (stats->visited == 0) {
+		stats->visited = 1;
+		stats->next = lolat_stats_head;
+		lolat_stats_head = stats;
 	}
+	stats->count++;
+	spin_unlock(&lolat_stats_lock);
 
-	rpciod_pid = 0;
-	wake_up(assassin);
+	if (current->state != TASK_RUNNING)
+		set_current_state(TASK_RUNNING);
+	schedule();
+}
 
-	dprintk("RPC: rpciod exiting\n");
-	MOD_DEC_USE_COUNT;
+void show_lolat_stats(void)
+{
+	struct lolat_stats_t *stats = lolat_stats_head;
+
+	printk("Low latency scheduling stats:\n");
+	while (stats) {
+		printk("%s:%d: %lu\n", stats->file, stats->line, stats->count);
+		stats->count = 0;
+		stats = stats->next;
+	}
+}
+
+#else	/* LOWLATENCY_DEBUG */
+
+void set_running_and_schedule()
+{
+	if (current->state != TASK_RUNNING)
+		__set_current_state(TASK_RUNNING);
+	schedule();
+}
+
+#endif	/* LOWLATENCY_DEBUG */
+
+int ll_copy_to_user(void *to_user, const void *from, unsigned long len)
+{
+	while (len) {
+		unsigned long n_to_copy = len;
+		unsigned long remainder;
+
+		if (n_to_copy > 4096)
+			n_to_copy = 4096;
+		remainder = copy_to_user(to_user, from, n_to_copy);
+		if (remainder)
+			return remainder + len;
+		to_user = ((char *)to_user) + n_to_copy;
+		from = ((char *)from) + n_to_copy;
+		len -= n_to_copy;
+		conditional_schedule();
+	}
 	return 0;
 }
 
-static void
-rpciod_killall(void)
+int ll_copy_from_user(void *to, const void *from_user, unsigned long len)
 {
-	unsigned long flags;
+	while (len) {
+		unsigned long n_to_copy = len;
+		unsigned long remainder;
 
-	while (!list_empty(&all_tasks)) {
-		current->sigpending = 0;
-		rpc_killall_tasks(NULL);
-		__rpc_schedule();
-		if (!list_empty(&all_tasks)) {
-			dprintk("rpciod_killall: waiting for tasks to exit\n");
-			yield();
-		}
+		if (n_to_copy > 4096)
+			n_to_copy = 4096;
+		remainder = copy_from_user(to, from_user, n_to_copy);
+		if (remainder)
+			return remainder + len;
+		to = ((char *)to) + n_to_copy;
+		from_user = ((char *)from_user) + n_to_copy;
+		len -= n_to_copy;
+		conditional_schedule();
 	}
-
-	spin_lock_irqsave(&current->sigmask_lock, flags);
-	recalc_sigpending(current);
-	spin_unlock_irqrestore(&current->sigmask_lock, flags);
+	return 0;
 }
 
-/*
- * Start up the rpciod process if it's not already running.
- */
-int
-rpciod_up(void)
-{
-	int error = 0;
-
-	MOD_INC_USE_COUNT;
-	down(&rpciod_sema);
-	dprintk("rpciod_up: pid %d, users %d\n", rpciod_pid, rpciod_users);
-	rpciod_users++;
-	if (rpciod_pid)
-		goto out;
-	/*
-	 * If there's no pid, we should be the first user.
-	 */
-	if (rpciod_users > 1)
-		printk(KERN_WARNING "rpciod_up: no pid, %d users??\n", rpciod_users);
-	/*
-	 * Create the rpciod thread and wait for it to start.
-	 */
-	error = kernel_thread(rpciod, &rpciod_killer, 0);
-	if (error < 0) {
-		printk(KERN_WARNING "rpciod_up: create thread failed, error=%d\n", error);
-		rpciod_users--;
-		goto out;
-	}
-	down(&rpciod_running);
-	error = 0;
-out:
-	up(&rpciod_sema);
-	MOD_DEC_USE_COUNT;
-	return error;
-}
-
-void
-rpciod_down(void)
-{
-	unsigned long flags;
-
-	MOD_INC_USE_COUNT;
-	down(&rpciod_sema);
-	dprintk("rpciod_down pid %d sema %d\n", rpciod_pid, rpciod_users);
-	if (rpciod_users) {
-		if (--rpciod_users)
-			goto out;
-	} else
-		printk(KERN_WARNING "rpciod_down: pid=%d, no users??\n", rpciod_pid);
-
-	if (!rpciod_pid) {
-		dprintk("rpciod_down: Nothing to do!\n");
-		goto out;
-	}
-
-	kill_proc(rpciod_pid, SIGKILL, 1);
-	/*
-	 * Usually rpciod will exit very quickly, so we
-	 * wait briefly before checking the process id.
-	 */
-	current->sigpending = 0;
-	yield();
-	/*
-	 * Display a message if we're going to wait longer.
-	 */
-	while (rpciod_pid) {
-		dprintk("rpciod_down: waiting for pid %d to exit\n", rpciod_pid);
-		if (signalled()) {
-			dprintk("rpciod_down: caught signal\n");
-			break;
-		}
-		interruptible_sleep_on(&rpciod_killer);
-	}
-	spin_lock_irqsave(&current->sigmask_lock, flags);
-	recalc_sigpending(current);
-	spin_unlock_irqrestore(&current->sigmask_lock, flags);
-out:
-	up(&rpciod_sema);
-	MOD_DEC_USE_COUNT;
-}
-
-#ifdef RPC_DEBUG
-void rpc_show_tasks(void)
-{
-	struct list_head *le;
-	struct rpc_task *t;
-
-	spin_lock(&rpc_sched_lock);
-	if (list_empty(&all_tasks)) {
-		spin_unlock(&rpc_sched_lock);
-		return;
-	}
-	printk("-pid- proc flgs status -client- -prog- --rqstp- -timeout "
-		"-rpcwait -action- --exit--\n");
-	alltask_for_each(t, le, &all_tasks)
-		printk("%05d %04d %04x %06d %8p %6d %8p %08ld %8s %8p %8p\n",
-			t->tk_pid, t->tk_msg.rpc_proc, t->tk_flags, t->tk_status,
-			t->tk_client, t->tk_client->cl_prog,
-			t->tk_rqstp, t->tk_timeout,
-			t->tk_rpcwait ? rpc_qname(t->tk_rpcwait) : " <NULL> ",
-			t->tk_action, t->tk_exit);
-	spin_unlock(&rpc_sched_lock);
-}
+#ifdef CONFIG_LOLAT_SYSCTL
+struct low_latency_enable_struct __enable_lowlatency = { 0, };
 #endif
+
+#endif	/* LOWLATENCY_NEEDED */
+
