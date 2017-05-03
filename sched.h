@@ -32,7 +32,10 @@ struct exec_domain;
 
 /*
  * cloning flags:   
+<<<<<<< HEAD
  lkjkl
+=======
+>>>>>>> branch-try
  sad
  */
 #define CSIGNAL		0x000000ff	/* signal mask to be sent at exit */
