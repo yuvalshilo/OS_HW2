@@ -321,6 +321,10 @@ extern struct user_struct root_user;
 
 typedef struct prio_array prio_array_t;
 
+/* Short defines */
+#define NOT_OVERDUE 0
+#define OVERDUE     1
+
 struct task_struct {
 	/*
 	 * offsets of these are hardcoded elsewhere - touch with care
@@ -362,6 +366,7 @@ struct task_struct {
 	struct linux_binfmt *binfmt;
 	int exit_code, exit_signal;
 	int pdeath_signal;  /*  The signal sent when the parent dies  */
+    unsigned short is_overdue; /* Short */
 	/* ??? */
 	unsigned long personality;
 	int did_exec:1;
