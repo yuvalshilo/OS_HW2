@@ -1145,6 +1145,11 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
 		goto out_nounlock;
 
+    if (lp.requested_time < 0 || lp.requested_time > 3000 ||
+        lp.sched_short_prio < 0 || lp.sched_short_prio > 130) {
+        retval = EINVAL;
+        goto out_nounlock;
+    }
 	/*
 	 * We play safe to avoid deadlocks.
 	 */
@@ -1193,7 +1198,12 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if (array)
 		deactivate_task(p, task_rq(p));
 	retval = 0;
+    if (p->policy == SCHED_SHORT) {
+        retval = -EPERM;
+        goto out_unlock;
+    }
 	p->policy = policy;
+    if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
 	if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
