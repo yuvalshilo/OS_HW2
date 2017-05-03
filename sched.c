@@ -1146,7 +1146,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 		goto out_nounlock;
 
     if (lp.requested_time < 0 || lp.requested_time > 3000 ||
-        lp.sched_short_prio < 0 || lp.sched_short_prio > 130) {
+        lp.sched_short_prio < 0 || lp.sched_short_prio > 139) {
         retval = EINVAL;
         goto out_nounlock;
     }
