@@ -1208,7 +1208,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
-		p->prio = p->static_prio + 140;
+        p->prio = p->static_prio;
 	if (array)
 		activate_task(p, task_rq(p));
 

@@ -181,9 +181,9 @@ extern int current_is_keventd(void);
  */
 
 #define MAX_USER_RT_PRIO	100
-#define MAX_RT_PRIO		MAX_USER_RT_PRIO
+#define MAX_RT_PRIO		(MAX_USER_RT_PRIO + 140)
 
-#define MAX_PRIO		(MAX_RT_PRIO + 180)
+#define MAX_PRIO		(MAX_RT_PRIO + 41)
 
 /*
  * The maximum RT priority is configurable.  If the resulting
