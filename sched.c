@@ -1205,8 +1205,10 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	p->policy = policy;
     if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
-	if (policy != SCHED_OTHER)
-		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+    if (policy == SCHED_SHORT)
+        p->prio = MAX_USER_RT_PRIO + lp->sched_short_prio;
+	else if (policy != SCHED_OTHER)
+        p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
         p->prio = p->static_prio;
 	if (array)
@@ -1429,6 +1431,8 @@ asmlinkage long sys_sched_get_priority_max(int policy)
 	case SCHED_OTHER:
 		ret = 0;
 		break;
+    case SCHED_SHORT:
+        ret = MAX_RT_PRIO-1;
 	}
 	return ret;
 }
@@ -1444,6 +1448,8 @@ asmlinkage long sys_sched_get_priority_min(int policy)
 		break;
 	case SCHED_OTHER:
 		ret = 0;
+    case SCHED_SHORT:
+        ret = MAX_USER_RT_PRIO;
 	}
 	return ret;
 }
