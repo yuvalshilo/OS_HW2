@@ -32,8 +32,8 @@
  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
  * and back.
  */
-#define NICE_TO_PRIO(nice)	(MAX_RT_PRIO + (nice) + 20)
-#define PRIO_TO_NICE(prio)	((prio) - MAX_RT_PRIO - 20)
+#define NICE_TO_PRIO(nice)	(MAX_SHORT_PRIO + (nice) + 20)
+#define PRIO_TO_NICE(prio)	((prio) - MAX_SHORT_PRIO - 20)
 #define TASK_NICE(p)		PRIO_TO_NICE((p)->static_prio)
 
 /*
@@ -41,7 +41,7 @@
  * can work with better when scaling various scheduler parameters,
  * it's a [ 0 ... 39 ] range.
  */
-#define USER_PRIO(p)		((p)-MAX_RT_PRIO)
+#define USER_PRIO(p)		((p)-MAX_SHORT_PRIO)
 #define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
 #define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
 
@@ -112,6 +112,9 @@
 #define TASK_TIMESLICE(p) (MIN_TIMESLICE + \
 	((MAX_TIMESLICE - MIN_TIMESLICE) * (MAX_PRIO-1-(p)->static_prio)/39))
 
+#define OVERDUE_SHORT_TASK_TIMESLICE(p)     \
+    (10 * (140 - (p)->short_priority))
+
 /*
  * These are the runqueue data structures:
  */
@@ -138,7 +141,7 @@ struct runqueue {
 	unsigned long nr_running, nr_switches, expired_timestamp;
 	signed long nr_uninterruptible;
 	task_t *curr, *idle;
-	prio_array_t *active, *expired, arrays[2];
+	prio_array_t *active, *expired, *overdue, arrays[2];
 	int prev_nr_running[NR_CPUS];
 	task_t *migration_thread;
 	list_t migration_queue;
@@ -151,6 +154,7 @@ static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 #define task_rq(p)		cpu_rq((p)->cpu)
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define rt_task(p)		((p)->prio < MAX_RT_PRIO)
+#define short_task(p)  ((p)->policy == SCHED_SHORT || (p)->is_overdue)
 
 /*
  * Default context-switch locking:
@@ -245,8 +249,8 @@ static inline int effective_prio(task_t *p)
 			MAX_USER_PRIO*PRIO_BONUS_RATIO/100/2;
 
 	prio = p->static_prio - bonus;
-	if (prio < MAX_RT_PRIO)
-		prio = MAX_RT_PRIO;
+	if (prio < MAX_SHORT_PRIO)
+		prio = MAX_SHORT_PRIO;
 	if (prio > MAX_PRIO-1)
 		prio = MAX_PRIO-1;
 	return prio;
@@ -257,7 +261,7 @@ static inline void activate_task(task_t *p, runqueue_t *rq)
 	unsigned long sleep_time = jiffies - p->sleep_timestamp;
 	prio_array_t *array = rq->active;
 
-	if (!rt_task(p) && sleep_time) {
+	if (!rt_task(p) && sleep_time && !short_task(p)) {
 		/*
 		 * This code gives a bonus to interactive tasks. We update
 		 * an 'average sleep time' value here, based on
@@ -396,7 +400,7 @@ void wake_up_forked_process(task_t * p)
 	runqueue_t *rq = this_rq_lock();
 
 	p->state = TASK_RUNNING;
-	if (!rt_task(p)) {
+	if (!rt_task(p) && !short_task(p)) {
 		/*
 		 * We decrease the sleep average of forking parents
 		 * and children as well, to keep max-interactive tasks
@@ -760,6 +764,23 @@ void scheduler_tick(int user_tick, int system)
 		}
 		goto out;
 	}
+    if (short_task(p)) {
+        if (!--p->time_slice) {
+            if (!p->is_overdue) {
+                set_tsk_need_resched(p);
+                dequeue_task(p, rq->active);
+                p->is_overdue = 1;
+            }else {
+                dequeue_task(p, rq->overdue);
+            }
+            
+            p->first_time_slice = 0;
+            p->time_slice = OVERDUE_SHORT_TASK_TIMESLICE(p);
+            
+            enqueue_task(p, rq->overdue);
+        }
+        goto out;
+    }
 	/*
 	 * The task was running during this tick - update the
 	 * time slice counter and the sleep average. Note: we
@@ -832,6 +853,13 @@ need_resched:
 pick_next_task:
 #endif
 	if (unlikely(!rq->nr_running)) {
+        if (rq->overdue->nr_active) {
+            array = rq->overdue;
+            idx = sched_find_first_bit(array->bitmap);
+            queue = array->queue + idx;
+            next = list_entry(queue->next, task_t, run_list);
+            goto switch_tasks;
+        }
 #if CONFIG_SMP
 		load_balance(rq, 1);
 		if (rq->nr_running)
@@ -1145,11 +1173,12 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
 		goto out_nounlock;
 
-    if (lp.requested_time < 0 || lp.requested_time > 3000 ||
+    if (lp.requested_time < 1 || lp.requested_time > 3000 ||
         lp.sched_short_prio < 0 || lp.sched_short_prio > 139) {
-        retval = EINVAL;
+        retval = -EINVAL;
         goto out_nounlock;
     }
+    
 	/*
 	 * We play safe to avoid deadlocks.
 	 */
@@ -1205,10 +1234,13 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	p->policy = policy;
     if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
-    if (policy == SCHED_SHORT)
-        p->prio = MAX_USER_RT_PRIO + lp->sched_short_prio;
-	else if (policy != SCHED_OTHER)
-        p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+    if (policy == SCHED_SHORT) {
+        p->prio = MAX_RT_PRIO + lp.short_priority;
+        p->short_priority = lp.short_priority;
+        p->requested_time = (lp.requested_time) * HZ / 1000;
+        p->time_slice = p->requested_time;
+    }else if (policy != SCHED_OTHER)
+		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
         p->prio = p->static_prio;
 	if (array)
@@ -1431,8 +1463,6 @@ asmlinkage long sys_sched_get_priority_max(int policy)
 	case SCHED_OTHER:
 		ret = 0;
 		break;
-    case SCHED_SHORT:
-        ret = MAX_RT_PRIO-1;
 	}
 	return ret;
 }
@@ -1448,8 +1478,6 @@ asmlinkage long sys_sched_get_priority_min(int policy)
 		break;
 	case SCHED_OTHER:
 		ret = 0;
-    case SCHED_SHORT:
-        ret = MAX_USER_RT_PRIO;
 	}
 	return ret;
 }

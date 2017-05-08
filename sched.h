@@ -119,6 +119,7 @@ extern unsigned long nr_uninterruptible(void);
 #define SCHED_OTHER		0
 #define SCHED_FIFO		1
 #define SCHED_RR		2
+
 #define SCHED_SHORT     5
 
 struct sched_param {
@@ -181,9 +182,9 @@ extern int current_is_keventd(void);
  */
 
 #define MAX_USER_RT_PRIO	100
-#define MAX_RT_PRIO		(MAX_USER_RT_PRIO + 140)
-
-#define MAX_PRIO		(MAX_RT_PRIO + 41)
+#define MAX_RT_PRIO		MAX_USER_RT_PRIO
+#define MAX_SHORT_PRIO  (MAX_RT_PRIO + 140)
+#define MAX_PRIO		(MAX_SHORT_PRIO + 40)
 
 /*
  * The maximum RT priority is configurable.  If the resulting
@@ -355,7 +356,7 @@ struct task_struct {
 
 	unsigned long policy;
 	unsigned long cpus_allowed;
-	unsigned int time_slice, first_time_slice;
+	unsigned int time_slice, first_time_slice, requested_time;
 
 	task_t *next_task, *prev_task;
 
@@ -392,6 +393,7 @@ struct task_struct {
 	wait_queue_head_t wait_chldexit;	/* for wait4() */
 	struct completion *vfork_done;		/* for vfork() */
 	unsigned long rt_priority;
+    unsigned long short_priority;       /* short */
 	unsigned long it_real_value, it_prof_value, it_virt_value;
 	unsigned long it_real_incr, it_prof_incr, it_virt_incr;
 	struct timer_list real_timer;
