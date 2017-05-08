@@ -654,6 +654,6 @@ ENTRY(sys_call_table)
 	.rept NR_syscalls-(.-sys_call_table)/4
 		.long SYMBOL_NAME(sys_ni_syscall)
 	.endr
-    .long SYMBOL_NAME(sys_is_short)     /* 243 */
-    .long SYMBOL_NAME(sys_short_remaining_time) /* 244 */
-    .long SYMBOL_NAME(sys_short_place_in_queue) /* 245 */
+    /*.long SYMBOL_NAME(sys_is_short)  */   /* 243 */
+    /*.long SYMBOL_NAME(sys_short_remaining_time) *//* 244 */
+    /*.long SYMBOL_NAME(sys_short_place_in_queue)*/ /* 245 */

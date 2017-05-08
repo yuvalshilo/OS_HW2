@@ -119,7 +119,7 @@ extern unsigned long nr_uninterruptible(void);
 #define SCHED_OTHER		0
 #define SCHED_FIFO		1
 #define SCHED_RR		2
-#defind SCHED_SHORT     5
+#define SCHED_SHORT     5
 
 struct sched_param {
 	int sched_priority;
@@ -183,7 +183,7 @@ extern int current_is_keventd(void);
 #define MAX_USER_RT_PRIO	100
 #define MAX_RT_PRIO		MAX_USER_RT_PRIO
 
-#define MAX_PRIO		(MAX_RT_PRIO + 40)
+#define MAX_PRIO		(MAX_RT_PRIO + 180)
 
 /*
  * The maximum RT priority is configurable.  If the resulting
