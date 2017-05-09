@@ -1,0 +1,16 @@
+cp -f entry.S /usr/src/linux-2.4.18-14custom/arch/i386/kernel
+cp -f exit.c /usr/src/linux-2.4.18-14custom/kernel
+cp -f fork.c /usr/src/linux-2.4.18-14custom/kernel
+cp -f hw2_syscalls.c /usr/src/linux-2.4.18-14custom/kernel
+cp -f sched.c /usr/src/linux-2.4.18-14custom/kernel
+cp -f sched.h /usr/src/linux-2.4.18-14custom/include/linux
+
+cd /usr/src/linux-2.4.18-14custom/
+make bzImage
+cd arch/i386/boot/
+cp bzImage /boot/vmlinuz-2.4.18-14custom
+cd /boot/
+mkinitrd 2.4.18-14custom.img 2.4.18-14custom
+echo Do you want to reboot?
+read -r answer
+if [ $x = "y" ]; then reboot

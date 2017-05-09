@@ -154,7 +154,7 @@ static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 #define task_rq(p)		cpu_rq((p)->cpu)
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define rt_task(p)		((p)->prio < MAX_RT_PRIO)
-#define short_task(p)  ((p)->policy == SCHED_SHORT || (p)->is_overdue)
+#define short_task(p)  ((p)->policy == SCHED_SHORT)
 
 /*
  * Default context-switch locking:
