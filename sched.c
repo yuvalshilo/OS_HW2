@@ -1235,8 +1235,8 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
     if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
     if (policy == SCHED_SHORT) {
-        p->prio = MAX_RT_PRIO + lp.short_priority;
-        p->short_priority = lp.short_priority;
+        p->prio = MAX_RT_PRIO + lp.sched_short_prio;
+        p->short_priority = lp.sched_short_prio;
         p->requested_time = (lp.requested_time) * HZ / 1000;
         p->time_slice = p->requested_time;
     }else if (policy != SCHED_OTHER)
