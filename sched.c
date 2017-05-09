@@ -1234,7 +1234,6 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         goto out_unlock;
     }
 	p->policy = policy;
-    printk("changed");
     if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
     if (policy == SCHED_SHORT) {
