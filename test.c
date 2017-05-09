@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <sys/types.h>
-#include "sched.h"
 #include "hw2_syscalls.h"
 
 struct sched_param {
@@ -17,18 +16,21 @@ int main() {
     
     int pid = getpid();
     struct sched_param sp;
+    
+    sched_getparam(pid, &sp);
+    
     sp.sched_priority = 0;
     sp.requested_time = 1;
     sp.sched_short_prio = 1;
     
-    sys_sched_setscheduler(pid, SCHED_SHORT, &sp);
+    sched_setscheduler(pid, 5, &sp);
     
-    sleep(5);
-
+    sleep(2);
     
-    printf("is_short = %d\n",is_short(pid));
-    printf("short_remaining_time = %d\n",short_remaining_time(pid));
-    printf("short_place_in_queue = %d\n",short_place_in_queue(pid));
+    printf("pid = %d\n", pid);
+    printf("is_short = %d, errno = %d\n",is_short(pid), errno);
+    printf("short_remaining_time = %d, errno = %d\n",short_remaining_time(pid), errno);
+    printf("short_place_in_queue = %d, errno = %d\n",short_place_in_queue(pid), errno);
     
     return 0;
 }

@@ -31,7 +31,7 @@ extern unsigned long event;
 struct exec_domain;
 
 /*
- * cloning flags:   
+ * cloning flags:
  */
 #define CSIGNAL		0x000000ff	/* signal mask to be sent at exit */
 #define CLONE_VM	0x00000100	/* set if VM shared between processes */
@@ -67,9 +67,9 @@ extern unsigned long avenrun[];		/* Load averages */
 #define EXP_15		2037		/* 1/exp(5sec/15min) */
 
 #define CALC_LOAD(load,exp,n) \
-	load *= exp; \
-	load += n*(FIXED_1-exp); \
-	load >>= FSHIFT;
+load *= exp; \
+load += n*(FIXED_1-exp); \
+load >>= FSHIFT;
 
 #define CT_TO_SECS(x)	((x) / HZ)
 #define CT_TO_USECS(x)	(((x) % HZ) * 1000000/HZ)
@@ -78,6 +78,10 @@ extern int nr_threads;
 extern int last_pid;
 extern unsigned long nr_running(void);
 extern unsigned long nr_uninterruptible(void);
+
+/* Short defines */
+#define NOT_OVERDUE 0
+#define OVERDUE     1
 
 #include <linux/fs.h>
 #include <linux/time.h>
@@ -94,23 +98,23 @@ extern unsigned long nr_uninterruptible(void);
 #define TASK_STOPPED		8
 
 #define __set_task_state(tsk, state_value)		\
-	do { (tsk)->state = (state_value); } while (0)
+do { (tsk)->state = (state_value); } while (0)
 #ifdef CONFIG_SMP
 #define set_task_state(tsk, state_value)		\
-	set_mb((tsk)->state, (state_value))
+set_mb((tsk)->state, (state_value))
 #else
 #define set_task_state(tsk, state_value)		\
-	__set_task_state((tsk), (state_value))
+__set_task_state((tsk), (state_value))
 #endif
 
 #define __set_current_state(state_value)			\
-	do { current->state = (state_value); } while (0)
+do { current->state = (state_value); } while (0)
 #ifdef CONFIG_SMP
 #define set_current_state(state_value)		\
-	set_mb(current->state, (state_value))
+set_mb(current->state, (state_value))
 #else
 #define set_current_state(state_value)		\
-	__set_current_state(state_value)
+__set_current_state(state_value)
 #endif
 
 /*
@@ -119,11 +123,10 @@ extern unsigned long nr_uninterruptible(void);
 #define SCHED_OTHER		0
 #define SCHED_FIFO		1
 #define SCHED_RR		2
-
 #define SCHED_SHORT     5
 
 struct sched_param {
-	int sched_priority;
+    int sched_priority;
     int requested_time;
     int sched_short_prio;
 };
@@ -153,7 +156,7 @@ extern void cpu_init (void);
 extern void trap_init(void);
 extern void update_process_times(int user);
 extern void update_one_process(task_t *p, unsigned long user,
-			       unsigned long system, int cpu);
+                               unsigned long system, int cpu);
 extern void scheduler_tick(int user_tick, int system);
 extern void migration_init(void);
 extern unsigned long cache_decay_ticks;
@@ -183,7 +186,9 @@ extern int current_is_keventd(void);
 
 #define MAX_USER_RT_PRIO	100
 #define MAX_RT_PRIO		MAX_USER_RT_PRIO
-#define MAX_SHORT_PRIO  MAX_RT_PRIO/*(MAX_RT_PRIO + 140)*/
+
+#define MAX_SHORT_PRIO  (MAX_RT_PRIO + 140)
+
 #define MAX_PRIO		(MAX_SHORT_PRIO + 40)
 
 /*
@@ -209,32 +214,32 @@ struct namespace;
  * Open file table structure
  */
 struct files_struct {
-	atomic_t count;
-	rwlock_t file_lock;	/* Protects all the below members.  Nests inside tsk->alloc_lock */
-	int max_fds;
-	int max_fdset;
-	int next_fd;
-	struct file ** fd;	/* current fd array */
-	fd_set *close_on_exec;
-	fd_set *open_fds;
-	fd_set close_on_exec_init;
-	fd_set open_fds_init;
-	struct file * fd_array[NR_OPEN_DEFAULT];
+    atomic_t count;
+    rwlock_t file_lock;	/* Protects all the below members.  Nests inside tsk->alloc_lock */
+    int max_fds;
+    int max_fdset;
+    int next_fd;
+    struct file ** fd;	/* current fd array */
+    fd_set *close_on_exec;
+    fd_set *open_fds;
+    fd_set close_on_exec_init;
+    fd_set open_fds_init;
+    struct file * fd_array[NR_OPEN_DEFAULT];
 };
 
 #define INIT_FILES \
 { 							\
-	count:		ATOMIC_INIT(1), 		\
-	file_lock:	RW_LOCK_UNLOCKED, 		\
-	max_fds:	NR_OPEN_DEFAULT, 		\
-	max_fdset:	__FD_SETSIZE, 			\
-	next_fd:	0, 				\
-	fd:		&init_files.fd_array[0], 	\
-	close_on_exec:	&init_files.close_on_exec_init, \
-	open_fds:	&init_files.open_fds_init, 	\
-	close_on_exec_init: { { 0, } }, 		\
-	open_fds_init:	{ { 0, } }, 			\
-	fd_array:	{ NULL, } 			\
+count:		ATOMIC_INIT(1), 		\
+file_lock:	RW_LOCK_UNLOCKED, 		\
+max_fds:	NR_OPEN_DEFAULT, 		\
+max_fdset:	__FD_SETSIZE, 			\
+next_fd:	0, 				\
+fd:		&init_files.fd_array[0], 	\
+close_on_exec:	&init_files.close_on_exec_init, \
+open_fds:	&init_files.open_fds_init, 	\
+close_on_exec_init: { { 0, } }, 		\
+open_fds_init:	{ { 0, } }, 			\
+fd_array:	{ NULL, } 			\
 }
 
 /* Maximum number of active map areas.. This is a random (large) number */
@@ -243,88 +248,84 @@ struct files_struct {
 extern int max_map_count;
 
 struct mm_struct {
-	struct vm_area_struct * mmap;		/* list of VMAs */
-	rb_root_t mm_rb;
-	struct vm_area_struct * mmap_cache;	/* last find_vma result */
-	pgd_t * pgd;
-	atomic_t mm_users;			/* How many users with user space? */
-	atomic_t mm_count;			/* How many references to "struct mm_struct" (users count as 1) */
-	int map_count;				/* number of VMAs */
-	struct rw_semaphore mmap_sem;
-	spinlock_t page_table_lock;		/* Protects task page tables and mm->rss */
-
-	struct list_head mmlist;		/* List of all active mm's.  These are globally strung
-						 * together off init_mm.mmlist, and are protected
-						 * by mmlist_lock
-						 */
-
-	unsigned long start_code, end_code, start_data, end_data;
-	unsigned long start_brk, brk, start_stack;
-	unsigned long arg_start, arg_end, env_start, env_end;
-	unsigned long rss, total_vm, locked_vm;
-	unsigned long def_flags;
-	unsigned long cpu_vm_mask;
-	unsigned long rlimit_rss;
-
-	unsigned dumpable:1;
-
-	/* Architecture-specific MM context */
-	mm_context_t context;
+    struct vm_area_struct * mmap;		/* list of VMAs */
+    rb_root_t mm_rb;
+    struct vm_area_struct * mmap_cache;	/* last find_vma result */
+    pgd_t * pgd;
+    atomic_t mm_users;			/* How many users with user space? */
+    atomic_t mm_count;			/* How many references to "struct mm_struct" (users count as 1) */
+    int map_count;				/* number of VMAs */
+    struct rw_semaphore mmap_sem;
+    spinlock_t page_table_lock;		/* Protects task page tables and mm->rss */
+    
+    struct list_head mmlist;		/* List of all active mm's.  These are globally strung
+                                     * together off init_mm.mmlist, and are protected
+                                     * by mmlist_lock
+                                     */
+    
+    unsigned long start_code, end_code, start_data, end_data;
+    unsigned long start_brk, brk, start_stack;
+    unsigned long arg_start, arg_end, env_start, env_end;
+    unsigned long rss, total_vm, locked_vm;
+    unsigned long def_flags;
+    unsigned long cpu_vm_mask;
+    unsigned long rlimit_rss;
+    
+    unsigned dumpable:1;
+    
+    /* Architecture-specific MM context */
+    mm_context_t context;
 };
 
 extern int mmlist_nr;
 
 #define INIT_MM(name) \
 {			 				\
-	mm_rb:		RB_ROOT,			\
-	pgd:		swapper_pg_dir, 		\
-	mm_users:	ATOMIC_INIT(2), 		\
-	mm_count:	ATOMIC_INIT(1), 		\
-	mmap_sem:	__RWSEM_INITIALIZER(name.mmap_sem), \
-	page_table_lock: SPIN_LOCK_UNLOCKED, 		\
-	mmlist:		LIST_HEAD_INIT(name.mmlist),	\
-	rlimit_rss:	RLIM_INFINITY,			\
+mm_rb:		RB_ROOT,			\
+pgd:		swapper_pg_dir, 		\
+mm_users:	ATOMIC_INIT(2), 		\
+mm_count:	ATOMIC_INIT(1), 		\
+mmap_sem:	__RWSEM_INITIALIZER(name.mmap_sem), \
+page_table_lock: SPIN_LOCK_UNLOCKED, 		\
+mmlist:		LIST_HEAD_INIT(name.mmlist),	\
+rlimit_rss:	RLIM_INFINITY,			\
 }
 
 struct signal_struct {
-	atomic_t		count;
-	struct k_sigaction	action[_NSIG];
-	spinlock_t		siglock;
+    atomic_t		count;
+    struct k_sigaction	action[_NSIG];
+    spinlock_t		siglock;
 };
 
 
 #define INIT_SIGNALS {	\
-	count:		ATOMIC_INIT(1), 		\
-	action:		{ {{0,}}, }, 			\
-	siglock:	SPIN_LOCK_UNLOCKED 		\
+count:		ATOMIC_INIT(1), 		\
+action:		{ {{0,}}, }, 			\
+siglock:	SPIN_LOCK_UNLOCKED 		\
 }
 
 /*
  * Some day this will be a full-fledged user tracking system..
  */
 struct user_struct {
-	atomic_t __count;	/* reference count */
-	atomic_t processes;	/* How many processes does this user have? */
-	atomic_t files;		/* How many open files does this user have? */
-
-	/* Hash table maintenance information */
-	struct user_struct *next, **pprev;
-	uid_t uid;
+    atomic_t __count;	/* reference count */
+    atomic_t processes;	/* How many processes does this user have? */
+    atomic_t files;		/* How many open files does this user have? */
+    
+    /* Hash table maintenance information */
+    struct user_struct *next, **pprev;
+    uid_t uid;
 };
 
 #define get_current_user() ({ 				\
-	struct user_struct *__user = current->user;	\
-	atomic_inc(&__user->__count);			\
-	__user; })
+struct user_struct *__user = current->user;	\
+atomic_inc(&__user->__count);			\
+__user; })
 
 extern struct user_struct root_user;
 #define INIT_USER (&root_user)
 
 typedef struct prio_array prio_array_t;
-
-/* Short defines */
-#define NOT_OVERDUE 0
-#define OVERDUE     1
 
 struct task_struct {
 	/*
@@ -356,7 +357,7 @@ struct task_struct {
 
 	unsigned long policy;
 	unsigned long cpus_allowed;
-    unsigned int time_slice, first_time_slice, requested_time;
+    unsigned int time_slice, first_time_slice;
 
 	task_t *next_task, *prev_task;
 
@@ -367,7 +368,7 @@ struct task_struct {
 	struct linux_binfmt *binfmt;
 	int exit_code, exit_signal;
 	int pdeath_signal;  /*  The signal sent when the parent dies  */
-    unsigned short is_overdue; /* Short */
+    
 	/* ??? */
 	unsigned long personality;
 	int did_exec:1;
@@ -393,7 +394,6 @@ struct task_struct {
 	wait_queue_head_t wait_chldexit;	/* for wait4() */
 	struct completion *vfork_done;		/* for vfork() */
 	unsigned long rt_priority;
-    unsigned long short_priority;       /* short */
 	unsigned long it_real_value, it_prof_value, it_virt_value;
 	unsigned long it_real_incr, it_prof_incr, it_virt_incr;
 	struct timer_list real_timer;
@@ -456,18 +456,23 @@ struct task_struct {
 /* Thread group tracking */
    	u32 parent_exec_id;
    	u32 self_exec_id;
-/* Protection of (de-)allocation: mm, files, fs, tty */
-	spinlock_t alloc_lock;
-
-/* journalling filesystem info */
-	void *journal_info;
+    /* Protection of (de-)allocation: mm, files, fs, tty */
+    spinlock_t alloc_lock;
+    
+    /* journalling filesystem info */
+    void *journal_info;
+    
+    /* Short */
+    unsigned int requested_time;
+    unsigned short is_overdue;
+    unsigned long short_priority;
 };
 
 /*
  * Per process flags
  */
 #define PF_ALIGNWARN	0x00000001	/* Print alignment warning msgs */
-					/* Not implemented yet, only for 486*/
+/* Not implemented yet, only for 486*/
 #define PF_STARTING	0x00000002	/* being created */
 #define PF_EXITING	0x00000004	/* getting shut down */
 #define PF_FORKNOEXEC	0x00000040	/* forked but didn't exec */
@@ -576,8 +581,8 @@ extern struct exec_domain	default_exec_domain;
 #endif
 
 union task_union {
-	task_t task;
-	unsigned long stack[INIT_TASK_SIZE/sizeof(long)];
+    task_t task;
+    unsigned long stack[INIT_TASK_SIZE/sizeof(long)];
 };
 
 extern union task_union init_task_union;
@@ -593,29 +598,29 @@ extern task_t *pidhash[PIDHASH_SZ];
 
 static inline void hash_pid(task_t *p)
 {
-	task_t **htable = &pidhash[pid_hashfn(p->pid)];
-
-	if((p->pidhash_next = *htable) != NULL)
-		(*htable)->pidhash_pprev = &p->pidhash_next;
-	*htable = p;
-	p->pidhash_pprev = htable;
+    task_t **htable = &pidhash[pid_hashfn(p->pid)];
+    
+    if((p->pidhash_next = *htable) != NULL)
+        (*htable)->pidhash_pprev = &p->pidhash_next;
+    *htable = p;
+    p->pidhash_pprev = htable;
 }
 
 static inline void unhash_pid(task_t *p)
 {
-	if(p->pidhash_next)
-		p->pidhash_next->pidhash_pprev = p->pidhash_pprev;
-	*p->pidhash_pprev = p->pidhash_next;
+    if(p->pidhash_next)
+        p->pidhash_next->pidhash_pprev = p->pidhash_pprev;
+    *p->pidhash_pprev = p->pidhash_next;
 }
 
 static inline task_t *find_task_by_pid(int pid)
 {
-	task_t *p, **htable = &pidhash[pid_hashfn(pid)];
-
-	for(p = *htable; p && p->pid != pid; p = p->pidhash_next)
-		;
-
-	return p;
+    task_t *p, **htable = &pidhash[pid_hashfn(pid)];
+    
+    for(p = *htable; p && p->pid != pid; p = p->pidhash_next)
+        ;
+    
+    return p;
 }
 
 /* per-UID process charging. */
@@ -628,7 +633,7 @@ extern void free_uid(struct user_struct *);
  * The 64-bit value is not volatile - you MUST NOT read it
  * without holding read_lock_irq(&xtime_lock)
  */
-extern u64 jiffies_64; 
+extern u64 jiffies_64;
 extern unsigned long volatile jiffies;
 extern unsigned long itimer_ticks;
 extern unsigned long itimer_next;
@@ -645,10 +650,10 @@ extern void FASTCALL(__wake_up(wait_queue_head_t *q, unsigned int mode, int nr))
 extern void FASTCALL(__wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr));
 extern void FASTCALL(sleep_on(wait_queue_head_t *q));
 extern long FASTCALL(sleep_on_timeout(wait_queue_head_t *q,
-				      signed long timeout));
+                                      signed long timeout));
 extern void FASTCALL(interruptible_sleep_on(wait_queue_head_t *q));
 extern long FASTCALL(interruptible_sleep_on_timeout(wait_queue_head_t *q,
-						    signed long timeout));
+                                                    signed long timeout));
 extern int FASTCALL(wake_up_process(task_t * tsk));
 extern void FASTCALL(wake_up_forked_process(task_t * tsk));
 extern void FASTCALL(sched_exit(task_t * p));
@@ -676,7 +681,7 @@ extern void flush_signal_handlers(task_t *);
 extern void sig_exit(int, int, struct siginfo *);
 extern int dequeue_signal(sigset_t *, siginfo_t *);
 extern void block_all_signals(int (*notifier)(void *priv), void *priv,
-			      sigset_t *mask);
+                              sigset_t *mask);
 extern void unblock_all_signals(void);
 extern int send_sig_info(int, struct siginfo *, task_t *);
 extern int force_sig_info(int, struct siginfo *, task_t *);
@@ -695,7 +700,7 @@ extern int do_sigaltstack(const stack_t *, stack_t *, unsigned long);
 
 static inline int signal_pending(task_t *p)
 {
-	return (p->sigpending != 0);
+    return (p->sigpending != 0);
 }
 
 /*
@@ -704,55 +709,55 @@ static inline int signal_pending(task_t *p)
  */
 static inline int has_pending_signals(sigset_t *signal, sigset_t *blocked)
 {
-	unsigned long ready;
-	long i;
-
-	switch (_NSIG_WORDS) {
-	default:
-		for (i = _NSIG_WORDS, ready = 0; --i >= 0 ;)
-			ready |= signal->sig[i] &~ blocked->sig[i];
-		break;
-
-	case 4: ready  = signal->sig[3] &~ blocked->sig[3];
-		ready |= signal->sig[2] &~ blocked->sig[2];
-		ready |= signal->sig[1] &~ blocked->sig[1];
-		ready |= signal->sig[0] &~ blocked->sig[0];
-		break;
-
-	case 2: ready  = signal->sig[1] &~ blocked->sig[1];
-		ready |= signal->sig[0] &~ blocked->sig[0];
-		break;
-
-	case 1: ready  = signal->sig[0] &~ blocked->sig[0];
-	}
-	return ready !=	0;
+    unsigned long ready;
+    long i;
+    
+    switch (_NSIG_WORDS) {
+        default:
+            for (i = _NSIG_WORDS, ready = 0; --i >= 0 ;)
+                ready |= signal->sig[i] &~ blocked->sig[i];
+            break;
+            
+        case 4: ready  = signal->sig[3] &~ blocked->sig[3];
+            ready |= signal->sig[2] &~ blocked->sig[2];
+            ready |= signal->sig[1] &~ blocked->sig[1];
+            ready |= signal->sig[0] &~ blocked->sig[0];
+            break;
+            
+        case 2: ready  = signal->sig[1] &~ blocked->sig[1];
+            ready |= signal->sig[0] &~ blocked->sig[0];
+            break;
+            
+        case 1: ready  = signal->sig[0] &~ blocked->sig[0];
+    }
+    return ready !=	0;
 }
 
 /* Reevaluate whether the task has signals pending delivery.
-   This is required every time the blocked sigset_t changes.
-   All callers should have t->sigmask_lock.  */
+ This is required every time the blocked sigset_t changes.
+ All callers should have t->sigmask_lock.  */
 
 static inline void recalc_sigpending(task_t *t)
 {
-	t->sigpending = has_pending_signals(&t->pending.signal, &t->blocked);
+    t->sigpending = has_pending_signals(&t->pending.signal, &t->blocked);
 }
 
 /* True if we are on the alternate signal stack.  */
 
 static inline int on_sig_stack(unsigned long sp)
 {
-	return (sp - current->sas_ss_sp < current->sas_ss_size);
+    return (sp - current->sas_ss_sp < current->sas_ss_size);
 }
 
 static inline int sas_ss_flags(unsigned long sp)
 {
-	return (current->sas_ss_size == 0 ? SS_DISABLE
-		: on_sig_stack(sp) ? SS_ONSTACK : 0);
+    return (current->sas_ss_size == 0 ? SS_DISABLE
+            : on_sig_stack(sp) ? SS_ONSTACK : 0);
 }
 
 extern int request_irq(unsigned int,
-		       void (*handler)(int, void *, struct pt_regs *),
-		       unsigned long, const char *, void *);
+                       void (*handler)(int, void *, struct pt_regs *),
+                       unsigned long, const char *, void *);
 extern void free_irq(unsigned int, void *);
 
 /*
@@ -766,29 +771,29 @@ extern void free_irq(unsigned int, void *);
  * fsuser(). This is done, along with moving fsuser() checks to be
  * last.
  *
- * These will be removed, but in the mean time, when the SECURE_NOROOT 
+ * These will be removed, but in the mean time, when the SECURE_NOROOT
  * flag is set, uids don't grant privilege.
  */
 static inline int suser(void)
 {
-	if (!issecure(SECURE_NOROOT) && current->euid == 0) { 
-		current->flags |= PF_SUPERPRIV;
-		return 1;
-	}
-	return 0;
+    if (!issecure(SECURE_NOROOT) && current->euid == 0) {
+        current->flags |= PF_SUPERPRIV;
+        return 1;
+    }
+    return 0;
 }
 
 static inline int fsuser(void)
 {
-	if (!issecure(SECURE_NOROOT) && current->fsuid == 0) {
-		current->flags |= PF_SUPERPRIV;
-		return 1;
-	}
-	return 0;
+    if (!issecure(SECURE_NOROOT) && current->fsuid == 0) {
+        current->flags |= PF_SUPERPRIV;
+        return 1;
+    }
+    return 0;
 }
 
 /*
- * capable() checks for a particular capability.  
+ * capable() checks for a particular capability.
  * New privilege checks should use this interface, rather than suser() or
  * fsuser(). See include/linux/capability.h for defined capabilities.
  */
@@ -796,15 +801,15 @@ static inline int fsuser(void)
 static inline int capable(int cap)
 {
 #if 1 /* ok now */
-	if (cap_raised(current->cap_effective, cap))
+    if (cap_raised(current->cap_effective, cap))
 #else
-	if (cap_is_fs_cap(cap) ? current->fsuid == 0 : current->euid == 0)
+        if (cap_is_fs_cap(cap) ? current->fsuid == 0 : current->euid == 0)
 #endif
-	{
-		current->flags |= PF_SUPERPRIV;
-		return 1;
-	}
-	return 0;
+        {
+            current->flags |= PF_SUPERPRIV;
+            return 1;
+        }
+    return 0;
 }
 
 /*
@@ -819,8 +824,8 @@ extern void end_lazy_tlb(struct mm_struct *mm);
 extern inline void FASTCALL(__mmdrop(struct mm_struct *));
 static inline void mmdrop(struct mm_struct * mm)
 {
-	if (atomic_dec_and_test(&mm->mm_count))
-		__mmdrop(mm);
+    if (atomic_dec_and_test(&mm->mm_count))
+        __mmdrop(mm);
 }
 
 /* mmput gets rid of the mappings and all user-space */
@@ -863,152 +868,152 @@ extern void kick_if_running(task_t * p);
 
 #define __wait_event(wq, condition) 					\
 do {									\
-	wait_queue_t __wait;						\
-	init_waitqueue_entry(&__wait, current);				\
-									\
-	add_wait_queue(&wq, &__wait);					\
-	for (;;) {							\
-		set_current_state(TASK_UNINTERRUPTIBLE);		\
-		if (condition)						\
-			break;						\
-		schedule();						\
-	}								\
-	current->state = TASK_RUNNING;					\
-	remove_wait_queue(&wq, &__wait);				\
+wait_queue_t __wait;						\
+init_waitqueue_entry(&__wait, current);				\
+\
+add_wait_queue(&wq, &__wait);					\
+for (;;) {							\
+set_current_state(TASK_UNINTERRUPTIBLE);		\
+if (condition)						\
+break;						\
+schedule();						\
+}								\
+current->state = TASK_RUNNING;					\
+remove_wait_queue(&wq, &__wait);				\
 } while (0)
 
 #define wait_event(wq, condition) 					\
 do {									\
-	if (condition)	 						\
-		break;							\
-	__wait_event(wq, condition);					\
+if (condition)	 						\
+break;							\
+__wait_event(wq, condition);					\
 } while (0)
 
 #define __wait_event_interruptible(wq, condition, ret)			\
 do {									\
-	wait_queue_t __wait;						\
-	init_waitqueue_entry(&__wait, current);				\
-									\
-	add_wait_queue(&wq, &__wait);					\
-	for (;;) {							\
-		set_current_state(TASK_INTERRUPTIBLE);			\
-		if (condition)						\
-			break;						\
-		if (!signal_pending(current)) {				\
-			schedule();					\
-			continue;					\
-		}							\
-		ret = -ERESTARTSYS;					\
-		break;							\
-	}								\
-	current->state = TASK_RUNNING;					\
-	remove_wait_queue(&wq, &__wait);				\
+wait_queue_t __wait;						\
+init_waitqueue_entry(&__wait, current);				\
+\
+add_wait_queue(&wq, &__wait);					\
+for (;;) {							\
+set_current_state(TASK_INTERRUPTIBLE);			\
+if (condition)						\
+break;						\
+if (!signal_pending(current)) {				\
+schedule();					\
+continue;					\
+}							\
+ret = -ERESTARTSYS;					\
+break;							\
+}								\
+current->state = TASK_RUNNING;					\
+remove_wait_queue(&wq, &__wait);				\
 } while (0)
-	
+
 #define wait_event_interruptible(wq, condition)				\
 ({									\
-	int __ret = 0;							\
-	if (!(condition))						\
-		__wait_event_interruptible(wq, condition, __ret);	\
-	__ret;								\
+int __ret = 0;							\
+if (!(condition))						\
+__wait_event_interruptible(wq, condition, __ret);	\
+__ret;								\
 })
 
 #define REMOVE_LINKS(p) do { \
-	(p)->next_task->prev_task = (p)->prev_task; \
-	(p)->prev_task->next_task = (p)->next_task; \
-	if ((p)->p_osptr) \
-		(p)->p_osptr->p_ysptr = (p)->p_ysptr; \
-	if ((p)->p_ysptr) \
-		(p)->p_ysptr->p_osptr = (p)->p_osptr; \
-	else \
-		(p)->p_pptr->p_cptr = (p)->p_osptr; \
-	} while (0)
+(p)->next_task->prev_task = (p)->prev_task; \
+(p)->prev_task->next_task = (p)->next_task; \
+if ((p)->p_osptr) \
+(p)->p_osptr->p_ysptr = (p)->p_ysptr; \
+if ((p)->p_ysptr) \
+(p)->p_ysptr->p_osptr = (p)->p_osptr; \
+else \
+(p)->p_pptr->p_cptr = (p)->p_osptr; \
+} while (0)
 
 #define SET_LINKS(p) do { \
-	(p)->next_task = &init_task; \
-	(p)->prev_task = init_task.prev_task; \
-	init_task.prev_task->next_task = (p); \
-	init_task.prev_task = (p); \
-	(p)->p_ysptr = NULL; \
-	if (((p)->p_osptr = (p)->p_pptr->p_cptr) != NULL) \
-		(p)->p_osptr->p_ysptr = p; \
-	(p)->p_pptr->p_cptr = p; \
-	} while (0)
+(p)->next_task = &init_task; \
+(p)->prev_task = init_task.prev_task; \
+init_task.prev_task->next_task = (p); \
+init_task.prev_task = (p); \
+(p)->p_ysptr = NULL; \
+if (((p)->p_osptr = (p)->p_pptr->p_cptr) != NULL) \
+(p)->p_osptr->p_ysptr = p; \
+(p)->p_pptr->p_cptr = p; \
+} while (0)
 
 #define for_each_task(p) \
-	for (p = &init_task ; (p = p->next_task) != &init_task ; )
+for (p = &init_task ; (p = p->next_task) != &init_task ; )
 
 #define for_each_thread(task) \
-	for (task = next_thread(current) ; task != current ; task = next_thread(task))
+for (task = next_thread(current) ; task != current ; task = next_thread(task))
 
 #define next_thread(p) \
-	list_entry((p)->thread_group.next, task_t, thread_group)
+list_entry((p)->thread_group.next, task_t, thread_group)
 
 #define thread_group_leader(p)	(p->pid == p->tgid)
 
 static inline void unhash_process(task_t *p)
 {
-	write_lock_irq(&tasklist_lock);
-	nr_threads--;
-	unhash_pid(p);
-	REMOVE_LINKS(p);
-	list_del(&p->thread_group);
-	write_unlock_irq(&tasklist_lock);
+    write_lock_irq(&tasklist_lock);
+    nr_threads--;
+    unhash_pid(p);
+    REMOVE_LINKS(p);
+    list_del(&p->thread_group);
+    write_unlock_irq(&tasklist_lock);
 }
 
 /* Protects ->fs, ->files, ->mm, and synchronises with wait4().  Nests inside tasklist_lock */
 static inline void task_lock(task_t *p)
 {
-	spin_lock(&p->alloc_lock);
+    spin_lock(&p->alloc_lock);
 }
 
 static inline void task_unlock(task_t *p)
 {
-	spin_unlock(&p->alloc_lock);
+    spin_unlock(&p->alloc_lock);
 }
 
 /* write full pathname into buffer and return start of pathname */
 static inline char * d_path(struct dentry *dentry, struct vfsmount *vfsmnt,
-				char *buf, int buflen)
+                            char *buf, int buflen)
 {
-	char *res;
-	struct vfsmount *rootmnt;
-	struct dentry *root;
-	read_lock(&current->fs->lock);
-	rootmnt = mntget(current->fs->rootmnt);
-	root = dget(current->fs->root);
-	read_unlock(&current->fs->lock);
-	spin_lock(&dcache_lock);
-	res = __d_path(dentry, vfsmnt, root, rootmnt, buf, buflen);
-	spin_unlock(&dcache_lock);
-	dput(root);
-	mntput(rootmnt);
-	return res;
+    char *res;
+    struct vfsmount *rootmnt;
+    struct dentry *root;
+    read_lock(&current->fs->lock);
+    rootmnt = mntget(current->fs->rootmnt);
+    root = dget(current->fs->root);
+    read_unlock(&current->fs->lock);
+    spin_lock(&dcache_lock);
+    res = __d_path(dentry, vfsmnt, root, rootmnt, buf, buflen);
+    spin_unlock(&dcache_lock);
+    dput(root);
+    mntput(rootmnt);
+    return res;
 }
 
 static inline void set_need_resched(void)
 {
-	current->need_resched = 1;
+    current->need_resched = 1;
 }
 
 static inline void clear_need_resched(void)
 {
-	current->need_resched = 0;
+    current->need_resched = 0;
 }
 
 static inline void set_tsk_need_resched(struct task_struct *tsk)
 {
-	tsk->need_resched = 1;
+    tsk->need_resched = 1;
 }
 
 static inline void clear_tsk_need_resched(struct task_struct *tsk)
 {
-	tsk->need_resched = 0;
+    tsk->need_resched = 0;
 }
 
 static inline int need_resched(void)
 {
-	return unlikely(current->need_resched);
+    return unlikely(current->need_resched);
 }
 
 #endif /* __KERNEL__ */
