@@ -11,6 +11,18 @@ int sys_is_short(pid_t pid) {
 }
 
 
+int sys_short_remaining_time(pid_t pid) {
+    struct task_t* ts = find_task_by_pid(pid);
+    if (!ts) {
+        return -ESRCH;
+    }
+    if (ts->policy != SCHED_SHORT) {
+        return -EINVAL
+    }
+
+    return ts->time_slice;
+}
+
 int short_place_in_queue(pid_t pid)
 {
     struct task_t* ts = find_task_by_pid(pid);
@@ -32,4 +44,3 @@ int short_place_in_queue(pid_t pid)
     /* TODO: check if ok with overdue */
     return cnt;
 }
-
