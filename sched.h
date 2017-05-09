@@ -183,7 +183,7 @@ extern int current_is_keventd(void);
 
 #define MAX_USER_RT_PRIO	100
 #define MAX_RT_PRIO		MAX_USER_RT_PRIO
-#define MAX_SHORT_PRIO  (MAX_RT_PRIO + 140)
+#define MAX_SHORT_PRIO  MAX_RT_PRIO/*(MAX_RT_PRIO + 140)*/
 #define MAX_PRIO		(MAX_SHORT_PRIO + 40)
 
 /*
@@ -356,7 +356,7 @@ struct task_struct {
 
 	unsigned long policy;
 	unsigned long cpus_allowed;
-	unsigned int time_slice, first_time_slice, requested_time;
+    unsigned int time_slice, first_time_slice, requested_time;
 
 	task_t *next_task, *prev_task;
 
@@ -541,10 +541,12 @@ extern struct exec_domain	default_exec_domain;
     active_mm:		&init_mm,					\
     run_list:		LIST_HEAD_INIT(tsk.run_list),			\
     time_slice:		HZ,						\
+    /*requested_time: 0,   */                    \
     next_task:		&tsk,						\
     prev_task:		&tsk,						\
     p_opptr:		&tsk,						\
     p_pptr:		&tsk,						\
+    /*is_overdue:     0,   */                    \
     thread_group:	LIST_HEAD_INIT(tsk.thread_group),		\
     wait_chldexit:	__WAIT_QUEUE_HEAD_INITIALIZER(tsk.wait_chldexit),\
     real_timer:		{						\

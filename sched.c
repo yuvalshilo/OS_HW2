@@ -141,7 +141,7 @@ struct runqueue {
 	unsigned long nr_running, nr_switches, expired_timestamp;
 	signed long nr_uninterruptible;
 	task_t *curr, *idle;
-	prio_array_t *active, *expired, *overdue, arrays[2];
+	prio_array_t *active, *expired, *overdue, arrays[3];
 	int prev_nr_running[NR_CPUS];
 	task_t *migration_thread;
 	list_t migration_queue;
@@ -261,7 +261,7 @@ static inline void activate_task(task_t *p, runqueue_t *rq)
 	unsigned long sleep_time = jiffies - p->sleep_timestamp;
 	prio_array_t *array = rq->active;
 
-	if (!rt_task(p) && sleep_time && !short_task(p)) {
+	if (!rt_task(p) && sleep_time /*&& !short_task(p)*/) {
 		/*
 		 * This code gives a bonus to interactive tasks. We update
 		 * an 'average sleep time' value here, based on
@@ -400,7 +400,7 @@ void wake_up_forked_process(task_t * p)
 	runqueue_t *rq = this_rq_lock();
 
 	p->state = TASK_RUNNING;
-	if (!rt_task(p) && !short_task(p)) {
+	if (!rt_task(p) /*&& !short_task(p)*/) {
 		/*
 		 * We decrease the sleep average of forking parents
 		 * and children as well, to keep max-interactive tasks
@@ -764,7 +764,7 @@ void scheduler_tick(int user_tick, int system)
 		}
 		goto out;
 	}
-    if (short_task(p)) {
+    /*if (short_task(p)) {
         if (!--p->time_slice) {
             if (!p->is_overdue) {
                 set_tsk_need_resched(p);
@@ -780,7 +780,7 @@ void scheduler_tick(int user_tick, int system)
             enqueue_task(p, rq->overdue);
         }
         goto out;
-    }
+    }*/
 	/*
 	 * The task was running during this tick - update the
 	 * time slice counter and the sleep average. Note: we
@@ -853,13 +853,13 @@ need_resched:
 pick_next_task:
 #endif
 	if (unlikely(!rq->nr_running)) {
-        if (rq->overdue->nr_active) {
+        /*if (rq->overdue->nr_active) {
             array = rq->overdue;
             idx = sched_find_first_bit(array->bitmap);
             queue = array->queue + idx;
             next = list_entry(queue->next, task_t, run_list);
             goto switch_tasks;
-        }
+        }*/
 #if CONFIG_SMP
 		load_balance(rq, 1);
 		if (rq->nr_running)
@@ -1172,13 +1172,14 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = -EFAULT;
 	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
 		goto out_nounlock;
-
-    if (lp.requested_time < 1 || lp.requested_time > 3000 ||
-        lp.sched_short_prio < 0 || lp.sched_short_prio > 139) {
-        retval = -EINVAL;
-        goto out_nounlock;
+   /* if(policy == SCHED_SHORT){
+        if (lp.requested_time < 1 || lp.requested_time > 3000 ||
+            lp.sched_short_prio < 0 || lp.sched_short_prio > 139) {
+            retval = -EINVAL;
+            goto out_nounlock;
+        }
     }
-    
+    */
 	/*
 	 * We play safe to avoid deadlocks.
 	 */
@@ -1232,14 +1233,14 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         goto out_unlock;
     }
 	p->policy = policy;
-    if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
+    if (policy == SCHED_SHORT) printk("IS HERE\n");/*p->is_overdue = NOT_OVERDUE;*/
 	p->rt_priority = lp.sched_priority;
-    if (policy == SCHED_SHORT) {
+    /*if (policy == SCHED_SHORT) {
         p->prio = MAX_RT_PRIO + lp.sched_short_prio;
         p->short_priority = lp.sched_short_prio;
         p->requested_time = (lp.requested_time) * HZ / 1000;
         p->time_slice = p->requested_time;
-    }else if (policy != SCHED_OTHER)
+    }else*/ if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
         p->prio = p->static_prio;
@@ -1667,10 +1668,11 @@ void __init sched_init(void)
 		rq = cpu_rq(i);
 		rq->active = rq->arrays;
 		rq->expired = rq->arrays + 1;
+        rq->overdue = rq->arrays + 2;
 		spin_lock_init(&rq->lock);
 		INIT_LIST_HEAD(&rq->migration_queue);
 
-		for (j = 0; j < 2; j++) {
+		for (j = 0; j < 3; j++) {
 			array = rq->arrays + j;
 			for (k = 0; k < MAX_PRIO; k++) {
 				INIT_LIST_HEAD(array->queue + k);
