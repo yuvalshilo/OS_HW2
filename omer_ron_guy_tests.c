@@ -562,9 +562,9 @@ int main(){
     setbuf(stdout, NULL);
     RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
-    RUN_TEST(test_fork);
-    RUN_TEST(test_policiesSchedulingOrder);
-    RUN_TEST(test_shortPriorityCheck);
-    RUN_TEST(test_overdueRR);
+    //RUN_TEST(test_fork);
+    //RUN_TEST(test_policiesSchedulingOrder);
+    //RUN_TEST(test_shortPriorityCheck);
+    //RUN_TEST(test_overdueRR);
     return 0;
 }
