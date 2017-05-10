@@ -1214,6 +1214,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
 	 */
 	retval = -EINVAL;
+    /* if policy is SCHED_SHORT, we dont care about sched_priority */
     if (policy != SCHED_SHORT){
         if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
             goto out_unlock;
@@ -1235,6 +1236,8 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = 0;
     if (p->policy != SCHED_OTHER && policy == SCHED_SHORT) {
         printk("<SHORT_ERROR:> thread's policy isn't SCHED_OTHER and policy is SCHED_SHORT\n");
+        printk("here\n");
+        printk("%d\n",p->policy);
         retval = -EPERM;
         goto out_unlock;
     }
