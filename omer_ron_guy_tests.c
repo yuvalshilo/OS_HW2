@@ -108,10 +108,8 @@ bool test_syscalls(){
     pid_t testProcess = fork();
     if(testProcess == 0){
 
-        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son 
+//        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son
 
-        printf("<SUCCESS:> make_realtime(SCHED_RR);\n");
-        
         //setup shared variables
         ready = mmap(NULL, sizeof(*ready), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *ready = 0;
@@ -198,7 +196,9 @@ bool test_syscalls(){
         //is_short, short_remaining_time, short_place_in_queue
         
         //calling is_short on a regular task:
-        ASSERT_TEST(is_short(getpid()) < 0 && errno == EINVAL);
+        int res = is_short(getpid());
+        printf("errno = %d", errno);
+        ASSERT_TEST(res < 0 && errno == EINVAL);
 
         //calling is_short on a non-existent task
         ASSERT_TEST(is_short(-100) < 0 && errno == ESRCH);
@@ -567,7 +567,7 @@ bool test_overdueRR(){
 
 int main(){
     setbuf(stdout, NULL);
-   // RUN_TEST(test_nonShortTasks);
+    RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
     //RUN_TEST(test_fork);
     //RUN_TEST(test_policiesSchedulingOrder);
