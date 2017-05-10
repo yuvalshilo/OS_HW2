@@ -110,6 +110,8 @@ bool test_syscalls(){
 
         make_realtime(SCHED_RR); // The father needs to have higher running priority over his son 
 
+        printf("<SUCCESS:> make_realtime(SCHED_RR);\n");
+        
         //setup shared variables
         ready = mmap(NULL, sizeof(*ready), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *ready = 0;
