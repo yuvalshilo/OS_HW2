@@ -327,6 +327,8 @@ extern struct user_struct root_user;
 
 typedef struct prio_array prio_array_t;
 
+
+
 struct task_struct {
 	/*
 	 * offsets of these are hardcoded elsewhere - touch with care

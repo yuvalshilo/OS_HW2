@@ -124,10 +124,11 @@
 typedef struct runqueue runqueue_t;
 
 struct prio_array {
-	int nr_active;
-	unsigned long bitmap[BITMAP_SIZE];
-	list_t queue[MAX_PRIO];
+    int nr_active;
+    unsigned long bitmap[BITMAP_SIZE];
+    list_t queue[MAX_PRIO];
 };
+
 
 /*
  * This is the main, per-CPU runqueue data structure.
@@ -1165,10 +1166,10 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	unsigned long flags;
 	runqueue_t *rq;
 	task_t *p;
-
+    printk("1169");
 	if (!param || pid < 0)
 		goto out_nounlock;
-
+    printk("1172");
 	retval = -EFAULT;
 	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
 		goto out_nounlock;
@@ -1179,7 +1180,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
             goto out_nounlock;
         }
     }
-    
+    printk("1183");
 	/*
 	 * We play safe to avoid deadlocks.
 	 */
@@ -1190,7 +1191,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = -ESRCH;
 	if (!p)
 		goto out_unlock_tasklist;
-
+    printk("1194");
 	/*
 	 * To be able to change p->policy safely, the apropriate
 	 * runqueue lock must be held.
@@ -1205,17 +1206,19 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 				policy != SCHED_OTHER && policy != SCHED_SHORT)
 			goto out_unlock;
 	}
-
+    printk("1209");
 	/*
 	 * Valid priorities for SCHED_FIFO and SCHED_RR are
 	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
 	 */
 	retval = -EINVAL;
-	if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
-		goto out_unlock;
-	if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
-		goto out_unlock;
-
+    if (policy != SCHED_SHORT){
+        if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
+            goto out_unlock;
+        if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
+            goto out_unlock;
+    }
+    printk("1219");
 	retval = -EPERM;
 	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
 	    !capable(CAP_SYS_NICE))
@@ -1223,7 +1226,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if ((current->euid != p->euid) && (current->euid != p->uid) &&
 	    !capable(CAP_SYS_NICE))
 		goto out_unlock;
-
+    printk("1227");
 	array = p->array;
 	if (array)
 		deactivate_task(p, task_rq(p));
@@ -1247,7 +1250,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         p->prio = p->static_prio;
 	if (array)
 		activate_task(p, task_rq(p));
-
+    printk("1251");
 out_unlock:
 	task_rq_unlock(rq, &flags);
 out_unlock_tasklist:

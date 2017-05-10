@@ -40,10 +40,14 @@ struct sched_param {
 /* LET US BEGIN */
 
 void make_realtime(int policy){
+    printf("in make_realtime\n");
     //Set the process to become realtime
     struct sched_param p;
+    printf("before setting sched_priority=1\n");
     p.sched_priority = 1;
+    printf("before assert\n");
     assert(sched_setscheduler(getpid(), policy, &p) >= 0);
+    printf("exiting make_realtime\n");
 }
 
 static pid_t nonShortCompletionOrderArray[2];
@@ -135,8 +139,9 @@ bool test_syscalls(){
             ASSERT_TEST(sched_setscheduler(getpid() , SCHED_SHORT, &p) == -1 && errno == EINVAL);
 
             *ready = 1;
+            printf("before while\n");
             while(is_short(getpid()) != 1 && is_short(getpid()) != 0){ sched_yield(); } // Yield for father to set us as SHORT
-
+            printf("after while\n");
             // Now we are SHORT
             
             //Nice call should FAIL
@@ -560,7 +565,7 @@ bool test_overdueRR(){
 
 int main(){
     setbuf(stdout, NULL);
-    RUN_TEST(test_nonShortTasks);
+   // RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
     //RUN_TEST(test_fork);
     //RUN_TEST(test_policiesSchedulingOrder);
