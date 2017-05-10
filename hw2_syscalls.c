@@ -40,8 +40,11 @@ int sys_short_place_in_queue(pid_t pid)
     int prio = ts->prio;
     int is_overdue = ts->is_overdue;
     
+    struct task_struct *p;
     for_each_task(p) {
-        if (p->is_overdue == is_overdue && p->short_prio <= prio) cnt++
+        if (p->is_overdue == is_overdue && p->short_priority <= prio && p->policy == SCHED_SHORT) {
+            cnt++;
+        }
     }
 
     return (cnt - 1 /* without this task */);
