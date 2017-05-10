@@ -4,7 +4,6 @@ cp -f fork.c /usr/src/linux-2.4.18-14custom/kernel
 cp -f hw2_syscalls.c /usr/src/linux-2.4.18-14custom/kernel
 cp -f sched.c /usr/src/linux-2.4.18-14custom/kernel
 cp -f sched.h /usr/src/linux-2.4.18-14custom/include/linux
-cp -f list.h /usr/src/linux-2.4.18-14custom/include/linux
 cp -f Makefile /usr/src/linux-2.4.18-14custom/kernel
 
 cd /usr/src/linux-2.4.18-14custom/
