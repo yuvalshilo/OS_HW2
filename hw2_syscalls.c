@@ -3,6 +3,13 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/list.h>
+#define BITMAP_SIZE ((((MAX_PRIO+1+7)/8)+sizeof(long)-1)/sizeof(long))
+
+extern struct prio_array {
+    int nr_active;
+    unsigned long bitmap[BITMAP_SIZE];
+    list_t queue[MAX_PRIO];
+};
 
 int sys_is_short(pid_t pid) {
     struct task_struct* ts = find_task_by_pid(pid);
@@ -39,7 +46,8 @@ int sys_short_place_in_queue(pid_t pid)
     }
     int cnt = 0;
     int prio = ts->prio;
-
+    struct prio_array * try = ts->array;
+    list_t* head2 = try->queue;
     list_t* head = ((prio_array_t *)(ts->array))->queue + prio;
     
     /* same priority */
