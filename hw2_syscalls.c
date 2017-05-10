@@ -42,7 +42,7 @@ int sys_short_place_in_queue(pid_t pid)
     
     task_t *p;
     for_each_task(p) {
-        if (p->is_overdue == is_overdue && p->short_priority <= prio && p->policy == SCHED_SHORT) {
+        if (p->policy == SCHED_SHORT && p->is_overdue == is_overdue && p->short_priority <= prio) {
             cnt++;
         }
     }

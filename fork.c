@@ -612,6 +612,18 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
 		goto fork_out;
 
 	*p = *current;
+    if (p->policy == SCHED_SHORT) {
+        if (current->is_overdue == OVERDUE) {
+            goto fork_out;
+        }
+        p->is_overdue = current->is_overdue;
+        p->requested_time = ((current->requested_time)/2) + ((current->requested_time)/2);
+        p->time_slice = p->requested_time;
+        current->requested_time = ((current->requested_time)/2);
+        current->time_slice = current->requested_time;
+        p->short_priority = MAX_SHORT_PRIO-1;
+        p->prio = p->short_priority;
+    }
 	p->tux_info = NULL;
 	p->cpus_allowed_mask &= p->cpus_allowed;
 
