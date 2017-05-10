@@ -1176,7 +1176,6 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
     if(policy == SCHED_SHORT){
         if (lp.requested_time < 1 || lp.requested_time > 3000 ||
             lp.sched_short_prio < 0 || lp.sched_short_prio > 139) {
-            printk("<SHORT_ERROR:> policy is short but requested_time or sched_short_prio outbound\n");
             retval = -EINVAL;
             goto out_nounlock;
         }
@@ -1205,7 +1204,6 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 		retval = -EINVAL;
 		if (policy != SCHED_FIFO && policy != SCHED_RR &&
 				policy != SCHED_OTHER && policy != SCHED_SHORT)
-            printk("<SHORT_ERROR:> policy's value is wrong, it is: %d\n", policy);
 			goto out_unlock;
 	}
     printk("1209");
@@ -1221,7 +1219,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
             goto out_unlock;
     }
-
+    printk("1219");
 	retval = -EPERM;
 	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
 	    !capable(CAP_SYS_NICE))
@@ -1242,12 +1240,8 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         goto out_unlock;
     }
 	p->policy = policy;
-    if (policy == SCHED_SHORT) {
-        p->is_overdue = NOT_OVERDUE;
-        p->rt_priority = 0;
-    }else {
-        p->rt_priority = lp.sched_priority;
-    }
+    if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
+	p->rt_priority = lp.sched_priority;
     if (policy == SCHED_SHORT) {
         p->prio = MAX_RT_PRIO + lp.sched_short_prio;
         p->short_priority = lp.sched_short_prio;
