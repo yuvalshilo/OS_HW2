@@ -1958,6 +1958,34 @@ int ll_copy_from_user(void *to, const void *from_user, unsigned long len)
 	return 0;
 }
 
+int _short_place_in_queue(pid_t pid)
+{
+    struct task_struct* ts = find_task_by_pid(pid);
+    list_t *head;
+    list_t *curr;
+    prio_array_t *array = ts->array;
+    int cnt = 0;
+    int prio = MAX_RT_PRIO;
+    
+    if (!ts) {
+        return -ESRCH;
+    }
+    if (ts->policy != SCHED_SHORT) {
+        return -EINVAL;
+    }
+    while (prio < ts->prio){
+        cnt+=list_size(&(array->queue[prio++]));
+    }
+
+    head = &(array->queue[prio]);
+    curr = &(ts->run_list);
+    while(curr != head){
+        cnt++;
+        curr = curr->next;
+    }
+    return cnt;
+}
+
 #ifdef CONFIG_LOLAT_SYSCTL
 struct low_latency_enable_struct __enable_lowlatency = { 0, };
 #endif

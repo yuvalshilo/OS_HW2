@@ -487,7 +487,7 @@ static void exit_notify(void)
 
 NORET_TYPE void do_exit(long code)
 {
-	struct task_struct *tsk = current;
+	struct task_struct *tsk = current;    
 
 	if (in_interrupt())
 		panic("Aiee, killing interrupt handler!");

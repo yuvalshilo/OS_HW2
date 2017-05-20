@@ -998,6 +998,8 @@ static inline void set_need_resched(void)
     current->need_resched = 1;
 }
 
+
+
 static inline void clear_need_resched(void)
 {
     current->need_resched = 0;
@@ -1012,6 +1014,8 @@ static inline void clear_tsk_need_resched(struct task_struct *tsk)
 {
     tsk->need_resched = 0;
 }
+
+
 
 static inline int need_resched(void)
 {
