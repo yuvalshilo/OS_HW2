@@ -27,6 +27,13 @@
 #include <linux/completion.h>
 #include <linux/kernel_stat.h>
 
+#define     WAIT_AND_PRINT(s)       \
+        do {   \
+            printk("%s\n", s);  \
+            unsigned long i = 1;    \
+            while (i++ != 0);   \
+        } while(0)
+
 /*
  * Convert user-nice values [ -20 ... 0 ... 19 ]
  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
@@ -259,33 +266,35 @@ static inline int effective_prio(task_t *p)
 
 static inline void activate_task(task_t *p, runqueue_t *rq)
 {
-	unsigned long sleep_time = jiffies - p->sleep_timestamp;
-	prio_array_t *array = rq->active;
-
-	if (!rt_task(p) && sleep_time && !short_task(p)) {
-		/*
-		 * This code gives a bonus to interactive tasks. We update
-		 * an 'average sleep time' value here, based on
-		 * sleep_timestamp. The more time a task spends sleeping,
-		 * the higher the average gets - and the higher the priority
-		 * boost gets as well.
-		 */
-		p->sleep_avg += sleep_time;
-		if (p->sleep_avg > MAX_SLEEP_AVG)
-			p->sleep_avg = MAX_SLEEP_AVG;
-		p->prio = effective_prio(p);
-	}
-	enqueue_task(p, array);
-	rq->nr_running++;
+    unsigned long sleep_time = jiffies - p->sleep_timestamp;
+    prio_array_t *array = (p->policy == SCHED_SHORT && p->is_overdue) ? rq->overdue : rq->active;
+    
+    if (!rt_task(p) && sleep_time && !short_task(p)) {
+        /*
+         * This code gives a bonus to interactive tasks. We update
+         * an 'average sleep time' value here, based on
+         * sleep_timestamp. The more time a task spends sleeping,
+         * the higher the average gets - and the higher the priority
+         * boost gets as well.
+         */
+        p->sleep_avg += sleep_time;
+        if (p->sleep_avg > MAX_SLEEP_AVG)
+            p->sleep_avg = MAX_SLEEP_AVG;
+        p->prio = effective_prio(p);
+    }
+    enqueue_task(p, array);
+    if (!(p->policy == SCHED_SHORT && p->is_overdue))
+        rq->nr_running++;
 }
 
 static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
 {
-	rq->nr_running--;
-	if (p->state == TASK_UNINTERRUPTIBLE)
-		rq->nr_uninterruptible++;
-	dequeue_task(p, p->array);
-	p->array = NULL;
+    if (!(p->policy == SCHED_SHORT && p->is_overdue))
+        rq->nr_running--;
+    if (p->state == TASK_UNINTERRUPTIBLE)
+        rq->nr_uninterruptible++;
+    dequeue_task(p, p->array);
+    p->array = NULL;
 }
 
 static inline void resched_task(task_t *p)
@@ -766,19 +775,14 @@ void scheduler_tick(int user_tick, int system)
 		goto out;
 	}
     if (short_task(p)) {
-        if (!--p->time_slice) {
-            if (!p->is_overdue) {
-                set_tsk_need_resched(p);
-                dequeue_task(p, rq->active);
-                p->is_overdue = 1;
-            }else {
-                dequeue_task(p, rq->overdue);
-            }
+        if (--p->time_slice == 0) {
             
+            deactivate_task(p,rq);
+            set_tsk_need_resched(p);
+            p->is_overdue = OVERDUE;
             p->first_time_slice = 0;
             p->time_slice = OVERDUE_SHORT_TASK_TIMESLICE(p);
-            
-            enqueue_task(p, rq->overdue);
+            activate_task(p,rq);
         }
         goto out;
     }
@@ -854,18 +858,19 @@ need_resched:
 pick_next_task:
 #endif
 	if (unlikely(!rq->nr_running)) {
-#if CONFIG_SMP
-        load_balance(rq, 1);
-        if (rq->nr_running)
-            goto pick_next_task;
-#endif
         if (rq->overdue->nr_active) {
             array = rq->overdue;
             idx = sched_find_first_bit(array->bitmap);
             queue = array->queue + idx;
             next = list_entry(queue->next, task_t, run_list);
+            rq->expired_timestamp = 0;
             goto switch_tasks;
         }
+#if CONFIG_SMP
+        load_balance(rq, 1);
+        if (rq->nr_running)
+            goto pick_next_task;
+#endif
 		next = rq->idle;
 		rq->expired_timestamp = 0;
 		goto switch_tasks;
@@ -1166,10 +1171,8 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	unsigned long flags;
 	runqueue_t *rq;
 	task_t *p;
-    printk("1169");
 	if (!param || pid < 0)
 		goto out_nounlock;
-    printk("1172");
 	retval = -EFAULT;
 	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
 		goto out_nounlock;
@@ -1180,7 +1183,6 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
             goto out_nounlock;
         }
     }
-    printk("1183");
 	/*
 	 * We play safe to avoid deadlocks.
 	 */
@@ -1191,7 +1193,6 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = -ESRCH;
 	if (!p)
 		goto out_unlock_tasklist;
-    printk("1194");
 	/*
 	 * To be able to change p->policy safely, the apropriate
 	 * runqueue lock must be held.
@@ -1206,19 +1207,22 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 				policy != SCHED_OTHER && policy != SCHED_SHORT)
 			goto out_unlock;
 	}
-    printk("1209");
 	/*
 	 * Valid priorities for SCHED_FIFO and SCHED_RR are
 	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
 	 */
 	retval = -EINVAL;
+    /* if policy is SCHED_SHORT, we dont care about sched_priority */
     if (policy != SCHED_SHORT){
         if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
             goto out_unlock;
         if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
             goto out_unlock;
     }
-    printk("1219");
+    if (p->policy == SCHED_SHORT) {
+        retval = -EPERM;
+        goto out_unlock;
+    }
 	retval = -EPERM;
 	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
 	    !capable(CAP_SYS_NICE))
@@ -1226,31 +1230,25 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if ((current->euid != p->euid) && (current->euid != p->uid) &&
 	    !capable(CAP_SYS_NICE))
 		goto out_unlock;
-    printk("1227");
 	array = p->array;
 	if (array)
 		deactivate_task(p, task_rq(p));
 	retval = 0;
-    if (p->policy != SCHED_OTHER && policy == SCHED_SHORT) {
-        printk("here");
-        retval = -EPERM;
-        goto out_unlock;
-    }
 	p->policy = policy;
-    if (policy == SCHED_SHORT) p->is_overdue = NOT_OVERDUE;
 	p->rt_priority = lp.sched_priority;
     if (policy == SCHED_SHORT) {
         p->prio = MAX_RT_PRIO + lp.sched_short_prio;
         p->short_priority = lp.sched_short_prio;
-        p->requested_time = (lp.requested_time) * HZ / 1000;
-        p->time_slice = p->requested_time;
+        p->static_prio = p->prio;
+        p->requested_time = lp.requested_time;
+        p->time_slice = (p->requested_time) * HZ / 1000;
+        p->is_overdue = NOT_OVERDUE;
     }else if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
         p->prio = p->static_prio;
 	if (array)
 		activate_task(p, task_rq(p));
-    printk("1251");
 out_unlock:
 	task_rq_unlock(rq, &flags);
 out_unlock_tasklist:
@@ -1305,6 +1303,8 @@ asmlinkage long sys_sched_getparam(pid_t pid, struct sched_param *param)
 	if (!p)
 		goto out_unlock;
 	lp.sched_priority = p->rt_priority;
+    lp.requested_time = p->requested_time;
+    lp.sched_short_prio = p->short_priority;
 	read_unlock(&tasklist_lock);
 
 	/*

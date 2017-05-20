@@ -612,8 +612,10 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
 		goto fork_out;
 
 	*p = *current;
+    p->policy = current->policy;
     if (p->policy == SCHED_SHORT) {
         if (current->is_overdue == OVERDUE) {
+            retval = -EACCES;
             goto fork_out;
         }
         p->is_overdue = current->is_overdue;
@@ -626,11 +628,6 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
     }
 	p->tux_info = NULL;
 	p->cpus_allowed_mask &= p->cpus_allowed;
-
-    if (p->policy == SCHED_SHORT && p->is_overdue == OVERDUE) {
-        retval = -EACCES;
-        goto bad_fork_free;
-    }
     
 	retval = -EAGAIN;
 	/*

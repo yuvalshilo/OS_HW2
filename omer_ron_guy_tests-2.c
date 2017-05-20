@@ -40,14 +40,10 @@ struct sched_param {
 /* LET US BEGIN */
 
 void make_realtime(int policy){
-    printf("in make_realtime\n");
     //Set the process to become realtime
     struct sched_param p;
-    printf("before setting sched_priority=1\n");
     p.sched_priority = 1;
-    printf("before assert\n");
     assert(sched_setscheduler(getpid(), policy, &p) >= 0);
-    printf("exiting make_realtime\n");
 }
 
 static pid_t nonShortCompletionOrderArray[2];
@@ -108,7 +104,7 @@ bool test_syscalls(){
     pid_t testProcess = fork();
     if(testProcess == 0){
 
-//        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son
+        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son 
 
         //setup shared variables
         ready = mmap(NULL, sizeof(*ready), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -139,9 +135,10 @@ bool test_syscalls(){
             ASSERT_TEST(sched_setscheduler(getpid() , SCHED_SHORT, &p) == -1 && errno == EINVAL);
 
             *ready = 1;
-            printf("before while\n");
             while(is_short(getpid()) != 1 && is_short(getpid()) != 0){ sched_yield(); } // Yield for father to set us as SHORT
-            printf("after while\n");
+            
+            printf("son is short, is_short(getpid()) = %d\n", is_short(getpid()));
+
             // Now we are SHORT
             
             //Nice call should FAIL
@@ -153,15 +150,16 @@ bool test_syscalls(){
             p.sched_short_prio = 1;
         
             ASSERT_TEST(sched_setscheduler(getpid() , SCHED_OTHER, &p) == -1 && errno == EPERM);
-            
-            return true;
-            
             ASSERT_TEST(sched_setparam(getpid(), &p) == -1 && errno == EPERM);
 
             // The task should still be SHORT, no possible way that all of the above took 3000 msecs ^
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT);
-            while(is_short(getpid()) != 0); // Wait until we become overdue
+            printf("wait until we become overdue\n");
+            printf("remaining time = %d\n",short_remaining_time(getpid()));
+            while(is_short(getpid()) != 0);// Wait until we become overdue
 
+            printf("now we are overdue\n");
+            
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT); // Overdue SHORT is still considered SHORT (for those who implemented using another policy name)
 
             struct sched_param params;
@@ -177,13 +175,11 @@ bool test_syscalls(){
         p1.sched_priority = 1337; // ELITE STUFF
         p1.requested_time = 3000; // Just because
         p1.sched_short_prio = 0; // Maximum prio engaged
-        
+
         ASSERT_TEST(sched_setscheduler(gonnaBeShort, SCHED_SHORT, &p1) >= 0);
 
         wait(NULL); // Wait until son exits
         
-        return true;
-
         *ready = 0; // "lock" cleanup
         
         gonnaBeShort = fork(); // Another test
@@ -572,9 +568,9 @@ int main(){
     setbuf(stdout, NULL);
     RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
-    //RUN_TEST(test_fork);
-    //RUN_TEST(test_policiesSchedulingOrder);
-    //RUN_TEST(test_shortPriorityCheck);
+//    RUN_TEST(test_fork);
+//    RUN_TEST(test_policiesSchedulingOrder);
+//    RUN_TEST(test_shortPriorityCheck);
 //    RUN_TEST(test_overdueRR);
     return 0;
 }

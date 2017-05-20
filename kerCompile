@@ -12,7 +12,3 @@ cd arch/i386/boot/
 cp bzImage /boot/vmlinuz-2.4.18-14custom
 cd /boot/
 mkinitrd 2.4.18-14custom.img 2.4.18-14custom
-echo Do you want to reboot?
-read -r answer
-if [ $x = "y" ]; then reboot fi;
-
