@@ -285,6 +285,7 @@ static inline void activate_task(task_t *p, runqueue_t *rq)
     enqueue_task(p, array);
     if (!(p->policy == SCHED_SHORT && p->is_overdue))
         rq->nr_running++;
+    
 }
 
 static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
@@ -784,9 +785,9 @@ void scheduler_tick(int user_tick, int system)
             p->first_time_slice = 0;
             p->time_slice = OVERDUE_SHORT_TASK_TIMESLICE(p);
             p->prio = MAX_SHORT_PRIO-1; /* All short procceses should run the same */
-            p->static_prio = p->prio;
             activate_task(p,rq);
         }
+        set_tsk_need_resched(p);
         goto out;
     }
 	/*
@@ -1250,6 +1251,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         p->requested_time = lp.requested_time;
         p->time_slice = (p->requested_time) * HZ / 1000;
         p->is_overdue = NOT_OVERDUE;
+        set_tsk_need_resched(current);
     }else if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
