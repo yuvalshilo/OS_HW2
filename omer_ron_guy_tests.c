@@ -40,14 +40,10 @@ struct sched_param {
 /* LET US BEGIN */
 
 void make_realtime(int policy){
-    printf("in make_realtime\n");
     //Set the process to become realtime
     struct sched_param p;
-    printf("before setting sched_priority=1\n");
     p.sched_priority = 1;
-    printf("before assert\n");
     assert(sched_setscheduler(getpid(), policy, &p) >= 0);
-    printf("exiting make_realtime\n");
 }
 
 static pid_t nonShortCompletionOrderArray[2];
@@ -108,7 +104,7 @@ bool test_syscalls(){
     pid_t testProcess = fork();
     if(testProcess == 0){
 
-//        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son
+        make_realtime(SCHED_RR); // The father needs to have higher running priority over his son 
 
         //setup shared variables
         ready = mmap(NULL, sizeof(*ready), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -139,9 +135,8 @@ bool test_syscalls(){
             ASSERT_TEST(sched_setscheduler(getpid() , SCHED_SHORT, &p) == -1 && errno == EINVAL);
 
             *ready = 1;
-            printf("before while\n");
             while(is_short(getpid()) != 1 && is_short(getpid()) != 0){ sched_yield(); } // Yield for father to set us as SHORT
-            printf("after while\n");
+
             // Now we are SHORT
             
             //Nice call should FAIL
@@ -157,6 +152,7 @@ bool test_syscalls(){
 
             // The task should still be SHORT, no possible way that all of the above took 3000 msecs ^
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT);
+            printf("155 - before while\n");
             while(is_short(getpid()) != 0); // Wait until we become overdue
 
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT); // Overdue SHORT is still considered SHORT (for those who implemented using another policy name)
@@ -196,9 +192,7 @@ bool test_syscalls(){
         //is_short, short_remaining_time, short_place_in_queue
         
         //calling is_short on a regular task:
-        int res = is_short(getpid());
-        printf("errno = %d", errno);
-        ASSERT_TEST(res < 0 && errno == EINVAL);
+        ASSERT_TEST(is_short(getpid()) < 0 && errno == EINVAL);
 
         //calling is_short on a non-existent task
         ASSERT_TEST(is_short(-100) < 0 && errno == ESRCH);
@@ -569,9 +563,9 @@ int main(){
     setbuf(stdout, NULL);
     RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
-    //RUN_TEST(test_fork);
-    //RUN_TEST(test_policiesSchedulingOrder);
-    //RUN_TEST(test_shortPriorityCheck);
-    //RUN_TEST(test_overdueRR);
+//    RUN_TEST(test_fork);
+//    RUN_TEST(test_policiesSchedulingOrder);
+//    RUN_TEST(test_shortPriorityCheck);
+//    RUN_TEST(test_overdueRR);
     return 0;
 }
