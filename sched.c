@@ -1970,7 +1970,7 @@ int _short_place_in_queue(pid_t pid)
     struct task_struct* ts = find_task_by_pid(pid);
     list_t *head;
     list_t *curr;
-    prio_array_t *array = ts->array;
+    prio_array_t *array;
     int cnt = 0;
     int prio = MAX_RT_PRIO;
     
@@ -1980,6 +1980,7 @@ int _short_place_in_queue(pid_t pid)
     if (ts->policy != SCHED_SHORT) {
         return -EINVAL;
     }
+    array = ts->array;
     while (prio < ts->prio){
         cnt+=list_size(&(array->queue[prio++]));
     }
@@ -1990,7 +1991,7 @@ int _short_place_in_queue(pid_t pid)
         cnt++;
         curr = curr->next;
     }
-    return cnt;
+    return cnt - 1; /* not counting itself */
 }
 
 #ifdef CONFIG_LOLAT_SYSCTL
