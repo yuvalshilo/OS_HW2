@@ -137,8 +137,6 @@ bool test_syscalls(){
             *ready = 1;
             while(is_short(getpid()) != 1 && is_short(getpid()) != 0){ sched_yield(); } // Yield for father to set us as SHORT
             
-            printf("son is short, is_short(getpid()) = %d\n", is_short(getpid()));
-
             // Now we are SHORT
             
             //Nice call should FAIL
@@ -154,18 +152,13 @@ bool test_syscalls(){
 
             // The task should still be SHORT, no possible way that all of the above took 3000 msecs ^
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT);
-<<<<<<< Updated upstream:omer_ron_guy_tests-2.c
             printf("wait until we become overdue\n");
             printf("remaining time = %d\n",short_remaining_time(getpid()));
+
             while(is_short(getpid()) != 0);// Wait until we become overdue
 
-            printf("now we are overdue\n");
             
-=======
-            printf("155 - before while\n");
-            while(is_short(getpid()) != 0); /*{ printf("%d\n",is_short(getpid()));}*/ // Wait until we become overdue
-            printf("157 - after while\n");
->>>>>>> Stashed changes:omer_ron_guy_tests.c
+
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT); // Overdue SHORT is still considered SHORT (for those who implemented using another policy name)
 
             struct sched_param params;
@@ -576,9 +569,9 @@ int main(){
     setbuf(stdout, NULL);
     RUN_TEST(test_nonShortTasks);
     RUN_TEST(test_syscalls);
-//    RUN_TEST(test_fork);
-//    RUN_TEST(test_policiesSchedulingOrder);
-//    RUN_TEST(test_shortPriorityCheck);
-//    RUN_TEST(test_overdueRR);
+    RUN_TEST(test_fork);
+    RUN_TEST(test_policiesSchedulingOrder);
+    RUN_TEST(test_shortPriorityCheck);
+    RUN_TEST(test_overdueRR);
     return 0;
 }

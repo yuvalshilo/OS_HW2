@@ -120,7 +120,7 @@
 	((MAX_TIMESLICE - MIN_TIMESLICE) * (MAX_PRIO-1-(p)->static_prio)/39))
 
 #define OVERDUE_SHORT_TASK_TIMESLICE(p)     \
-    (10 * (140 - (p)->short_priority))
+    ((10 * (140 - (p)->short_priority)) * HZ / 1000)
 
 /*
  * These are the runqueue data structures:
@@ -782,6 +782,8 @@ void scheduler_tick(int user_tick, int system)
             p->is_overdue = OVERDUE;
             p->first_time_slice = 0;
             p->time_slice = OVERDUE_SHORT_TASK_TIMESLICE(p);
+            p->prio = MAX_SHORT_PRIO-1; /* All short procceses should run the same */
+            p->static_prio = p->prio;
             activate_task(p,rq);
         }
         goto out;
