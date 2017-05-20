@@ -1234,6 +1234,10 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	if (array)
 		deactivate_task(p, task_rq(p));
 	retval = 0;
+    if (p->policy == SCHED_SHORT) {
+        retval = -EPERM;
+        goto out_unlock;
+    }
 	p->policy = policy;
 	p->rt_priority = lp.sched_priority;
     if (policy == SCHED_SHORT) {
