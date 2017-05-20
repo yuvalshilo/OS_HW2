@@ -24,7 +24,7 @@ int sys_short_remaining_time(pid_t pid) {
         return -EINVAL;
     }
 
-    return ts->time_slice;
+    return (ts->time_slice) * 1000 / HZ;
 }
 
 int sys_short_place_in_queue(pid_t pid)
