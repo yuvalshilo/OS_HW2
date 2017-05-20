@@ -152,8 +152,6 @@ bool test_syscalls(){
 
             // The task should still be SHORT, no possible way that all of the above took 3000 msecs ^
             ASSERT_TEST(sched_getscheduler(getpid()) == SCHED_SHORT);
-            printf("wait until we become overdue\n");
-            printf("remaining time = %d\n",short_remaining_time(getpid()));
 
             while(is_short(getpid()) != 0);// Wait until we become overdue
 
@@ -168,17 +166,13 @@ bool test_syscalls(){
             //And we're done here
             exit(0);
         }
-        printf("167\n");
         while(!*ready); // Wait until son is ready to become SHORT
-        printf("169\n");
         struct sched_param p1;
         p1.sched_priority = 1337; // ELITE STUFF
         p1.requested_time = 3000; // Just because
         p1.sched_short_prio = 0; // Maximum prio engaged
-        printf("174\n");
 
         ASSERT_TEST(sched_setscheduler(gonnaBeShort, SCHED_SHORT, &p1) >= 0);
-        printf("177 - before wait(NULL)\n");
         wait(NULL); // Wait until son exits
         
         *ready = 0; // "lock" cleanup
