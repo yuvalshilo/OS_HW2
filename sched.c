@@ -734,6 +734,7 @@ static inline void idle_tick(void)
  */
 void scheduler_tick(int user_tick, int system)
 {
+    
 	int cpu = smp_processor_id();
 	runqueue_t *rq = this_rq();
 	task_t *p = current;
@@ -1437,6 +1438,10 @@ asmlinkage long sys_sched_yield(void)
 	}
 
 	list_del(&current->run_list);
+    if (current->policy == SCHED_SHORT){
+        list_add_tail(&current->run_list,array->queue + current->prio);
+        goto out_unlock;
+    }
 	if (!list_empty(array->queue + current->prio)) {
 		list_add(&current->run_list, array->queue[current->prio].next);
 		goto out_unlock;
