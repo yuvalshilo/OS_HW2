@@ -1993,7 +1993,7 @@ int _short_place_in_queue(pid_t pid)
     curr = &(ts->run_list);
     while(curr != head){
         cnt++;
-        curr = curr->next;
+        curr = curr->prev;
     }
     return cnt - 1; /* not counting itself */
 }
