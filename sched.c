@@ -1120,6 +1120,8 @@ asmlinkage long sys_nice(int increment)
      *	We don't have to worry. Conceptually one call occurs first
      *	and we have a single winner.
      */
+    if (current->policy == SCHED_SHORT)
+        return -EPERM;
     if (increment < 0) {
         if (!capable(CAP_SYS_NICE))
             return -EPERM;

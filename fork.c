@@ -618,9 +618,6 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
             retval = -EACCES;
             goto fork_out;
         }
-        p->time_slice = ((current->time_slice)/2) + ((current->time_slice)%2);
-        current->time_slice = (current->time_slice) / 2;
-        p->prio = MAX_SHORT_PRIO-1;
     }
 	p->tux_info = NULL;
 	p->cpus_allowed_mask &= p->cpus_allowed;
@@ -736,8 +733,9 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
 	if (!current->time_slice)
 		BUG();
 	p->time_slice = (current->time_slice + 1) >> 1;
+    current->time_slice >>= 1;
+
 	p->first_time_slice = 1;
-	current->time_slice >>= 1;
 	p->sleep_timestamp = jiffies;
 	if (!current->time_slice) {
 		/*
