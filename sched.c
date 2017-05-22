@@ -1972,11 +1972,9 @@ int ll_copy_from_user(void *to, const void *from_user, unsigned long len)
 int _short_place_in_queue(pid_t pid)
 {
     struct task_struct* ts = find_task_by_pid(pid);
-    list_t *head;
-    list_t *curr;
-    prio_array_t *array;
+    list_t *t;
     int cnt = 0;
-    int prio = MAX_RT_PRIO;
+    int i;
     
     if (!ts) {
         return -ESRCH;
@@ -1984,18 +1982,15 @@ int _short_place_in_queue(pid_t pid)
     if (ts->policy != SCHED_SHORT) {
         return -EINVAL;
     }
-    array = ts->array;
-    while (prio < ts->prio){
-        cnt+=list_size(&(array->queue[prio++]));
+    for(i = MAX_RT_PRIO; i<= ts->prio ; i++){
+        list_for_each(t , ts->array->queue + i){
+            if(list_entry(t, task_t,  run_list)->pid == pid)
+                goto out;
+            cnt++;
+        }
     }
-
-    head = &(array->queue[prio]);
-    curr = &(ts->run_list);
-    while(curr != head){
-        cnt++;
-        curr = curr->next;
-    }
-    return cnt - 1; /* not counting itself */
+out:
+    return cnt;
 }
 
 #ifdef CONFIG_LOLAT_SYSCTL
