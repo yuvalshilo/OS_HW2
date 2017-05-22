@@ -391,7 +391,7 @@ repeat_lock_task:
 		/*
 		 * If sync is set, a resched_task() is a NOOP
 		 */
-		if (p->prio < rq->curr->prio)
+		if (p->prio < rq->curr->prio || ((rq->curr->policy == SCHED_SHORT && rq->curr->is_overdue) && !(p->policy == SCHED_SHORT && p->is_overdue)))
 			resched_task(rq->curr);
 		success = 1;
 	}
@@ -784,10 +784,9 @@ void scheduler_tick(int user_tick, int system)
             p->is_overdue = OVERDUE;
             p->first_time_slice = 0;
             p->time_slice = OVERDUE_SHORT_TASK_TIMESLICE(p);
-            p->prio = MAX_SHORT_PRIO-1; /* All short procceses should run the same */
+            p->prio = MAX_PRIO-1; /* All short procceses should run the same */
             activate_task(p,rq);
         }
-        set_tsk_need_resched(p);
         goto out;
     }
 	/*
@@ -1251,7 +1250,8 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
         p->requested_time = lp.requested_time;
         p->time_slice = (p->requested_time) * HZ / 1000;
         p->is_overdue = NOT_OVERDUE;
-        set_tsk_need_resched(current);
+        if (p->prio < current->prio)
+            set_tsk_need_resched(current);
     }else if (policy != SCHED_OTHER)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
@@ -1264,6 +1264,8 @@ out_unlock_tasklist:
 	read_unlock_irq(&tasklist_lock);
 
 out_nounlock:
+    if (current->policy == SCHED_SHORT && current->is_overdue)
+        set_tsk_need_resched(p);
 	return retval;
 }
 

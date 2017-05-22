@@ -1,0 +1,335 @@
+[34m[1mRunning test_sched_set_schedule ...
+[0m[0m[35m	verify shced_getscheduler works [0m[36mLine[66] By Task[1731]	[0m
+[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[67] and Passed 
+[0m[32m		Expected [sched_setscheduler(task_id,SCHED_OTHER,&param) == 0] at LINE[73] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[74] and Passed 
+[0m[35m	test passing bad parameters to set schedule. [0m[36mLine[76] By Task[1731]	[0m
+[35m	bad param [0m[36mLine[77] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT,NULL) == -1] at LINE[78] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[79] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[80] and Passed 
+[0m[35m	bad policy [0m[36mLine[82] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT+1,&param) == -1] at LINE[83] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[84] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[85] and Passed 
+[0m[35m	bad short priority. [0m[36mLine[87] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT,&param) == -1] at LINE[89] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[90] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[91] and Passed 
+[0m[35m	bad short priority. [0m[36mLine[94] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT,&param) == -1] at LINE[96] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[97] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[98] and Passed 
+[0m[35m	bad requested time. [0m[36mLine[101] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT,&param) == -1] at LINE[103] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[104] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[105] and Passed 
+[0m[35m	bad requested time. [0m[36mLine[108] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id,SCHED_SHORT,&param) == -1] at LINE[110] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[111] and Passed 
+[0m[32m		Expected [sched_getscheduler(task_id) == SCHED_OTHER] at LINE[112] and Passed 
+[0m[35m	bad pid [0m[36mLine[115] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(task_id*10,SCHED_SHORT,&param) == -1] at LINE[116] and Passed 
+[0m[32m		Expected [errno == ESRCH] at LINE[117] and Passed 
+[0m[35m	Forking in order to set the new short policy. [0m[36mLine[119] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(son,SCHED_SHORT,&param) == 0] at LINE[127] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[128] and Passed 
+[0m[32m		Expected [status != 0] at LINE[134] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_is_short ...
+[0m[0m[35m	father is not a short [0m[36mLine[143] By Task[1731]	[0m
+[32m		Expected [is_short(father) == -1] at LINE[144] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[145] and Passed 
+[0m[35m	bad pid [0m[36mLine[146] By Task[1731]	[0m
+[32m		Expected [is_short(-1) == -1] at LINE[147] and Passed 
+[0m[35m	no task with the given pid. [0m[36mLine[148] By Task[1731]	[0m
+[32m		Expected [is_short(father*10) == -1] at LINE[149] and Passed 
+[0m[32m		Expected [errno == ESRCH] at LINE[150] and Passed 
+[0m[35m	Forking in order to set the new short policy. [0m[36mLine[152] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(son,SCHED_SHORT,&param) == 0] at LINE[160] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[161] and Passed 
+[0m[35m	son is a short and not overdue yet. [0m[36mLine[163] By Task[1733]	[0m
+[32m		Expected [is_short(son) == 1] at LINE[164] and Passed 
+[0m[35m	Son is short but not overdue-> doing a long task. [0m[36mLine[166] By Task[1733]	[0m
+[32m		Expected [is_short(son) == 0] at LINE[169] and Passed 
+[0m[32m		Expected [status != 0] at LINE[175] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_short_remaining_time ...
+[0m[0m[35m	father is not short. [0m[36mLine[186] By Task[1731]	[0m
+[32m		Expected [short_remaining_time(father) == -1] at LINE[187] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[188] and Passed 
+[0m[35m	there should not be a task with this pid. [0m[36mLine[190] By Task[1731]	[0m
+[32m		Expected [short_remaining_time(father*100) == -1] at LINE[191] and Passed 
+[0m[32m		Expected [errno == ESRCH] at LINE[192] and Passed 
+[0m[35m	Forking to test on a short son. [0m[36mLine[194] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[206] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[207] and Passed 
+[0m[35m	Son[1734] is short not overdue and these are his remaining durations:
+[0m[35m	Son[1734]'s durations should be contained in [ 0 ... 100 ].
+		[0m[33m--T[0]=99, [0m[33m--T[1]=74, [0m[33m--T[2]=46, [0m[33m--T[3]=19, [0m
+[32m		Expected [is_short(son) == 0] at LINE[225] and Passed 
+[0m[35m	Son[1734] is short overdue and these are his remaining durations.
+[0m[35m	Son[1734]'s durations should be contained in [ 0 ... 400 ].
+		[0m[33m--T[0]=388, [0m[33m--T[1]=357, [0m[33m--T[2]=328, [0m[33m--T[3]=298, [0m[33m--T[4]=271, [0m
+[32m		Expected [status != 0] at LINE[243] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_change_short_params ...
+[0m[0m[35m	Forking to create a short son with low prio. [0m[36mLine[257] By Task[1731]	[0m
+[35m	set the son. [0m[36mLine[262] By Task[1735]	[0m
+[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[263] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[264] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[265] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[266] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[267] and Passed 
+[0m[35m	reset should fail [0m[36mLine[270] By Task[1735]	[0m
+[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == -1] at LINE[273] and Passed 
+[0m[32m		Expected [errno == EPERM] at LINE[274] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[275] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[276] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[277] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[278] and Passed 
+[0m[32m		Expected [time-15 > short_remaining_time(son) == true] at LINE[279] and Passed 
+[0m[32m		Expected [sched_setparam(son, &param) == -1] at LINE[283] and Passed 
+[0m[32m		Expected [errno == EPERM] at LINE[284] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[285] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[286] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[287] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[288] and Passed 
+[0m[32m		Expected [time-15 > short_remaining_time(son) == true] at LINE[289] and Passed 
+[0m[35m	set with a negative policy is used to set param [0m[36mLine[292] By Task[1735]	[0m
+[32m		Expected [sched_setscheduler(son, -1, &param) == -1] at LINE[295] and Passed 
+[0m[32m		Expected [errno == EPERM] at LINE[296] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[297] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[298] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[299] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[300] and Passed 
+[0m[32m		Expected [time-15 > short_remaining_time(son) == true] at LINE[301] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, -1, &param) == -1] at LINE[305] and Passed 
+[0m[32m		Expected [errno == EPERM] at LINE[306] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[307] and Passed 
+[0m[32m		Expected [sched_getparam(0,&param) == 0] at LINE[308] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[309] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[310] and Passed 
+[0m[32m		Expected [time-15 > short_remaining_time(son) == true] at LINE[311] and Passed 
+[0m[32m		Expected [status != 0] at LINE[317] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_fork ...
+[0m[0m[35m	Srtting the running task to be short [0m[36mLine[334] By Task[1736]	[0m
+[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[335] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[336] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[337] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[338] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[339] and Passed 
+[0m[35m	Son is forking- time should split and prio should stay constant [0m[36mLine[341] By Task[1736]	[0m
+[35m	Son forked and should run before his father [0m[36mLine[353] By Task[1736]	[0m
+[35m	Rather than the time slice- son params should not change [0m[36mLine[354] By Task[1736]	[0m
+[32m		Expected [(short_remaining_time(son)<=requested_time/2) == true] at LINE[355] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[356] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[357] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[358] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[359] and Passed 
+[0m[35m	Son will run till he becomes an overdue to let his grandson exit [0m[36mLine[361] By Task[1736]	[0m
+[35m	Grandson is starting to run! [0m[36mLine[344] By Task[1737]	[0m
+[32m		Expected [(short_remaining_time(grandson)<=1+requested_time/2) == true] at LINE[346] and Passed 
+[0m[32m		Expected [sched_getscheduler(son) == SCHED_SHORT] at LINE[347] and Passed 
+[0m[32m		Expected [sched_getparam(son,&param) == 0] at LINE[348] and Passed 
+[0m[32m		Expected [param.requested_time == requested_time] at LINE[349] and Passed 
+[0m[32m		Expected [param.sched_short_prio == sched_short_prio] at LINE[350] and Passed 
+[0m[35m	Son is overdue and running [0m[36mLine[365] By Task[1736]	[0m
+[32m		Expected [is_short(son) == 0] at LINE[366] and Passed 
+[0m[35m	Son will try to fork- should fail. [0m[36mLine[367] By Task[1736]	[0m
+[32m		Expected [fork() == -1] at LINE[368] and Passed 
+[0m[32m		Expected [status != 0] at LINE[370] and Passed 
+[0m[32m		Expected [status != 0] at LINE[374] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_order ...
+[0m[0m[35m	Setting up the test [0m[36mLine[397] By Task[1738]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[398] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[399] and Passed 
+[0m[35m	The test has a long duration and a high prio. should not stop rather than a RT task [0m[36mLine[401] By Task[1738]	[0m
+[35m	test is checking his own place in queue [0m[36mLine[402] By Task[1738]	[0m
+[32m		Expected [short_place_in_queue(test) == 0] at LINE[404] and Passed 
+[0m[35m	Looking up the location of each son- the location in the array + 1 for the test. [0m[36mLine[413] By Task[1738]	[0m
+[32m		Expected [short_place_in_queue(pids[i]) == i+1] at LINE[415] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i+1] at LINE[415] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i+1] at LINE[415] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i+1] at LINE[415] and Passed 
+[0m[35m	Allow the sons to run by waiting - dq the run list [0m[36mLine[417] By Task[1738]	[0m
+[35m	task is runing for the first time- should happen only after father allowed [0m[36mLine[409] By Task[1739]	[0m
+[35m	task is runing for the first time- should happen only after father allowed [0m[36mLine[409] By Task[1740]	[0m
+[35m	task is runing for the first time- should happen only after father allowed [0m[36mLine[409] By Task[1741]	[0m
+[35m	task is runing for the first time- should happen only after father allowed [0m[36mLine[409] By Task[1742]	[0m
+[35m	Test caught a zombie son [0m[36mLine[419] By Task[1738]	[0m
+[35m	Test caught a zombie son [0m[36mLine[419] By Task[1738]	[0m
+[35m	Test caught a zombie son [0m[36mLine[419] By Task[1738]	[0m
+[35m	Test caught a zombie son [0m[36mLine[419] By Task[1738]	[0m
+[32m		Expected [status != 0] at LINE[425] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_other_prior_to_overdue ...
+[0m[0m[35m	Forking before the setup- to keep a task with other policy [0m[36mLine[438] By Task[1743]	[0m
+[35m	Setting up the test [0m[36mLine[444] By Task[1743]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[445] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[446] and Passed 
+[0m[35m	I should run only after my father becomes a overdue - line below is GOOD! [0m[36mLine[441] By Task[1744]	[0m
+[35m	Test is overdue [0m[36mLine[448] By Task[1743]	[0m
+[32m		Expected [is_short(test) == 0] at LINE[449] and Passed 
+[0m[32m		Expected [status != 0] at LINE[455] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_short_place_in_rq_while_target_is_not_in_rq ...
+[0m[0m[35m	Test is entering the wait list- wont be in the run queue. [0m[36mLine[479] By Task[1745]	[0m
+[35m	Son is running! [0m[36mLine[471] By Task[1746]	[0m
+[35m	Son is setting his father-test to be a short [0m[36mLine[472] By Task[1746]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[473] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[474] and Passed 
+[0m[35m	Father should not be in the RQ! [0m[36mLine[475] By Task[1746]	[0m
+[32m		Expected [short_place_in_queue(test) == -1] at LINE[476] and Passed 
+[0m[32m		Expected [status != 0] at LINE[484] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_RR_and_FIFO_policy_still_works ...
+[0m[0m[35m	Setting the RR policy but param is invalid [0m[36mLine[496] By Task[1747]	[0m
+[32m		Expected [sched_setscheduler(test,SCHED_RR,&param) == -1] at LINE[497] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_OTHER] at LINE[498] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[499] and Passed 
+[0m[35m	Setting the OTHER policy but param is invalid [0m[36mLine[501] By Task[1747]	[0m
+[32m		Expected [sched_setscheduler(test,SCHED_RR,&param) == -1] at LINE[502] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_OTHER] at LINE[503] and Passed 
+[0m[32m		Expected [errno == EINVAL] at LINE[504] and Passed 
+[0m[35m	Setting the RR policy with valid param [0m[36mLine[506] By Task[1747]	[0m
+[32m		Expected [sched_setscheduler(test,SCHED_RR,&param) == 0] at LINE[508] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_RR] at LINE[509] and Passed 
+[0m[35m	Setting the FIFO policy with valid param [0m[36mLine[511] By Task[1747]	[0m
+[32m		Expected [sched_setscheduler(test,SCHED_FIFO,&param) == 0] at LINE[512] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_FIFO] at LINE[513] and Passed 
+[0m[32m		Expected [status != 0] at LINE[518] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_yield_the_cpu_to_other_and_lowe_prio ...
+[0m[0m[35m	Test will try to yield the cpu to a OTHER task - cpu stays at the test. [0m[36mLine[523] By Task[1731]	[0m
+[35m	Setting up the test - after the next lines case1 should not run till alowed! [0m[36mLine[540] By Task[1748]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[541] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[542] and Passed 
+[0m[32m		Expected [sched_yield() == 0] at LINE[544] and Passed 
+[0m[35m	The test should keep running without letting his son run. [0m[36mLine[545] By Task[1748]	[0m
+[35m	Test will try to yield the cpu to a short task with lower prio - cpu stays at the test [0m[36mLine[547] By Task[1748]	[0m
+[32m		Expected [sched_setscheduler(case1, SCHED_SHORT, &param) == 0] at LINE[549] and Passed 
+[0m[32m		Expected [sched_getscheduler(case1) == SCHED_SHORT] at LINE[550] and Passed 
+[0m[32m		Expected [sched_yield() == 0] at LINE[552] and Passed 
+[0m[35m	The test should keep running without letting his son run. [0m[36mLine[553] By Task[1748]	[0m
+[35m	case1 didnt start runing therefore should have the initial amount of time [0m[36mLine[555] By Task[1748]	[0m
+[32m		Expected [short_remaining_time(case1) == param.requested_time] at LINE[556] and Passed 
+[0m[35m	Case1 should only run once the test is overdue or the test set the case as short [0m[36mLine[536] By Task[1749]	[0m
+[32m		Expected [status != 0] at LINE[560] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_yield_the_cpu_between_short ...
+[0m[0m[35m	Test will try to yield the cpu to a task with other policy and then to a short task with lower prio [0m[36mLine[598] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[609] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[610] and Passed 
+[0m[35m	Test - The next task that should run is case1 [0m[36mLine[620] By Task[1750]	[0m
+[35m	Case1 - The next task that should run is the test [0m[36mLine[614] By Task[1751]	[0m
+[32m		Expected [sched_yield() == 0] at LINE[621] and Passed 
+[0m[35m	Test - The next task that should run is case1 [0m[36mLine[622] By Task[1750]	[0m
+[32m		Expected [sched_yield() == 0] at LINE[615] and Passed 
+[0m[35m	Case1 is running [0m[36mLine[616] By Task[1751]	[0m
+[32m		Expected [sched_yield() == 0] at LINE[623] and Passed 
+[0m[35m	Test is running [0m[36mLine[624] By Task[1750]	[0m
+[32m		Expected [status != 0] at LINE[629] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_other_before_overdue ...
+[0m[0m[35m	Test that a task with other policy runs before overdue [0m[36mLine[636] By Task[1731]	[0m
+[32m		Expected [sched_setscheduler(test, SCHED_SHORT, &param) == 0] at LINE[654] and Passed 
+[0m[32m		Expected [sched_getscheduler(test) == SCHED_SHORT] at LINE[655] and Passed 
+[0m[32m		Expected [is_short(test) == 1] at LINE[656] and Passed 
+[0m[35m	Case1 should run only after the test is overdue [0m[36mLine[650] By Task[1753]	[0m
+[32m		Expected [is_short(test) == 0] at LINE[651] and Passed 
+[0m[32m		Expected [is_short(test) == 0] at LINE[658] and Passed 
+[0m[35m	Test should run only after other finishes- therefore wont exit the runqueue [0m[36mLine[660] By Task[1752]	[0m
+[32m		Expected [status != 0] at LINE[666] and Passed 
+[0m[32m[SUCCESS]
+[0m[34m[1mRunning test_order_between_overdues ...
+[0m[0m[35m	Test the order between overdues- by creating overdues with predetrmined ordedr [0m[36mLine[673] By Task[1731]	[0m
+[35m	Father is other and will creatre shorts with a low duration [0m[36mLine[683] By Task[1754]	[0m
+[35m	The shorts will recieve the cpu but become overdue very fast- and return the cpu to the father [0m[36mLine[684] By Task[1754]	[0m
+[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Created a son- setting him to be short- son will steal the cpu. [0m[36mLine[695] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 1] at LINE[690] and Passed 
+[0m[32m		Expected [sched_setscheduler(son, SCHED_SHORT, &param) == 0] at LINE[697] and Passed 
+[0m[35m	Verify all the sons are overdue. [0m[36mLine[700] By Task[1754]	[0m
+[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [is_short(pids[i]) == 0] at LINE[702] and Passed 
+[0m[32m		Expected [short_remaining_time(pids[i]) > 10*(140-i*i) - 3 == true] at LINE[703] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[32m		Expected [short_place_in_queue(pids[i]) == i] at LINE[706] and Passed 
+[0m[35m	Clean up. [0m[36mLine[708] By Task[1754]	[0m
+[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [is_short(getpid()) == 0] at LINE[692] and Passed 
+[0m[32m		Expected [status != 0] at LINE[710] and Passed 
+[0m[32m		Expected [status != 0] at LINE[715] and Passed 
+[0m[32m[SUCCESS]
+[0m
