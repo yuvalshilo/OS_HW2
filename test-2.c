@@ -33,6 +33,14 @@
 } while(0)
 
 
+struct sched_param {
+    int sched_priority; //ignored for SHORT processes
+    int requested_time; //between 1 and 3000
+    int sched_short_prio; //between 0 and 139
+};
+
+
+
 static int i;
 
 static int* ready1;
@@ -1160,7 +1168,7 @@ bool winter17_test14() {
        MARK(1);
        time_remain= short_remaining_time(getpid());
        ASSERT_TEST( (time_remain>1200) && (time_remain<1800) );
-        
+
 
        MARK(2);
 
