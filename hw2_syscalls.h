@@ -3,11 +3,9 @@
 #ifndef hw2_syscalls_h
 #define hw2_syscalls_h
 
-struct sched_param {
-    int sched_priority;
-    int requested_time;
-    int sched_short_prio;
-};
+typedef struct sched_param {
+    int sched_priority, requested_time, sched_short_prio;
+} sched_param_t;
 
 int is_short(pid_t pid) {
     unsigned int res;
